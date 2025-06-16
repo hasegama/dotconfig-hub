@@ -1,0 +1,37 @@
+# Project initialization template configuration
+environment_sets:
+  # Complete project template
+  my_project_init_template:
+    description: "Complete project initialization template with development tools"
+    tools:
+      # Claude configuration
+      claude_config:
+        project_dir: my_project_init_template
+        files:
+          - .claude/CLAUDE.md
+          - .claude/commands/*.md
+          - "**/.claude/*.md"
+      
+      # Development environment
+      vscode:
+        project_dir: my_project_init_template
+        files:
+          - .vscode/settings.json
+          - .vscode/launch.json
+          - .vscode/tasks.json
+          - .vscode/extensions.json
+      
+      github:
+        project_dir: my_project_init_template
+        files:
+          - .github/workflows/*.yml
+          - .github/workflows/*.yaml
+          - .github/dependabot.yml
+          - .github/ISSUE_TEMPLATE/*.md
+          - .github/PULL_REQUEST_TEMPLATE.md
+      
+      git_config:
+        project_dir: my_project_init_template
+        files:
+          - .gitignore
+          # - .gitattributes

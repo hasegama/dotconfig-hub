@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dotconfig-hub"
+version = "None"
+description = "Central management and distribution tool for favorite dotfiles and configuration templates"
+readme = "README.md"
+requires-python = ">=3.8"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+]
+authors = [
+    { name = "hasegama", email = "40445443+hasegama@users.noreply.github.com" }
+]
+dependencies = [
+    "click>=8.0",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+    "gitpython>=3.1",
+]
+[project.urls]
+Homepage = "https://github.com/hasegama/dotconfig-hub"
+
+[project.scripts]
+dotconfig-hub = "dotconfig_hub.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
