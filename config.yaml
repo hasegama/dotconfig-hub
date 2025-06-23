@@ -8,9 +8,10 @@ environment_sets:
       claude_config:
         project_dir: my_project_init_template
         files:
-          - .claude/CLAUDE.md
+          - CLAUDE.md
           - .claude/commands/*.md
           - "**/.claude/*.md"
+          - .claude/settings.local.json
       
       # Development environment
       vscode:
