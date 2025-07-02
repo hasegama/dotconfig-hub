@@ -196,7 +196,8 @@ class Config:
             if '*' not in file_pattern and '?' not in file_pattern:
                 source = project_dir / file_pattern
                 target = target_dir / file_pattern
-                if source.exists():
+                # Include in mapping if file exists in either location
+                if source.exists() or target.exists():
                     mapping[source] = target
             else:
                 # For glob patterns, match files and create relative mappings
