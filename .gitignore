@@ -163,7 +163,7 @@ cython_debug/
 .vscode/
 
 # GitHub
-.github/
+# .github/
 
 # OS
 .DS_Store

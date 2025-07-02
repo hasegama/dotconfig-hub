@@ -1,0 +1,580 @@
+name: Claude Code
+on:
+    issue_comment:
+        types: [created]
+    pull_request_review_comment:
+        types: [created]
+    issues:
+        types: [opened, assigned]
+    pull_request:
+        types: [opened, edited]
+    pull_request_review:
+        types: [submitted]
+# 並列実行を5つに制限
+concurrency:
+  group: claude-execution-pool-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+    claude:
+        if: |
+            (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+            (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+            (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+            (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude'))) ||
+            (github.event_name == 'pull_request' && contains(github.event.pull_request.body, '@claude'))
+        runs-on: self-hosted
+        permissions:
+            contents: write
+            pull-requests: write
+            issues: write
+            id-token: write
+        timeout-minutes: 60
+        steps:
+            # 環境変数の初期設定
+            - name: Initialize environment
+              run: |
+                # 一意のIDを生成
+                UNIQUE_ID="${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}-$(date +%s)-$RANDOM"
+                echo "UNIQUE_ID=$UNIQUE_ID" >> $GITHUB_ENV
+                
+                # PR番号の厳密な取得と検証
+                PR_NUMBER=""
+                EVENT_TYPE="${{ github.event_name }}"
+                
+                echo "=== PR番号取得開始 ==="
+                echo "イベントタイプ: $EVENT_TYPE"
+                
+                # イベントタイプ別のPR番号取得
+                case "$EVENT_TYPE" in
+                  "pull_request")
+                    PR_NUMBER="${{ github.event.pull_request.number }}"
+                    echo "pull_requestイベント: PR#$PR_NUMBER"
+                    ;;
+                  "pull_request_review")
+                    PR_NUMBER="${{ github.event.pull_request.number }}"
+                    echo "pull_request_reviewイベント: PR#$PR_NUMBER"
+                    ;;
+                  "pull_request_review_comment")
+                    PR_NUMBER="${{ github.event.pull_request.number }}"
+                    echo "pull_request_review_commentイベント: PR#$PR_NUMBER"
+                    ;;
+                  "issue_comment")
+                    # issue_commentの場合、より厳密にPRかどうかを判定
+                    ISSUE_URL="${{ github.event.issue.html_url }}"
+                    PULL_REQUEST_URL="${{ github.event.issue.pull_request.url }}"
+                    
+                    echo "Issue URL: $ISSUE_URL"
+                    echo "Pull Request URL: $PULL_REQUEST_URL"
+                    
+                    # URLにpullが含まれているかチェック
+                    if [[ "$ISSUE_URL" == *"/pull/"* ]] && [[ -n "$PULL_REQUEST_URL" ]]; then
+                      PR_NUMBER="${{ github.event.issue.number }}"
+                      echo "issue_commentイベント（PR上）: PR#$PR_NUMBER"
+                    else
+                      echo "issue_commentイベント（Issue上）: PRではありません"
+                    fi
+                    ;;
+                  "issues")
+                    echo "issuesイベント: PRではありません"
+                    ;;
+                  *)
+                    echo "未対応のイベントタイプ: $EVENT_TYPE"
+                    ;;
+                esac
+                
+                # PR番号の妥当性検証
+                if [[ -n "$PR_NUMBER" ]]; then
+                  # 数値であることを確認
+                  if [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+                    echo "✅ 有効なPR番号: $PR_NUMBER"
+                  else
+                    echo "❌ 無効なPR番号: $PR_NUMBER"
+                    PR_NUMBER=""
+                  fi
+                else
+                  echo "ℹ️ PR番号なし（Issueまたは未対応イベント）"
+                fi
+                
+                echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+                
+                # 作業ディレクトリ（PR固有）
+                if [ -n "$PR_NUMBER" ]; then
+                  WORK_DIR="${{ runner.temp }}/claude-pr-$PR_NUMBER-$UNIQUE_ID"
+                  PROMPT_FILE="$WORK_DIR/prompts/claude-prompt-pr-$PR_NUMBER.txt"
+                else
+                  WORK_DIR="${{ runner.temp }}/claude-$UNIQUE_ID"
+                  PROMPT_FILE="$WORK_DIR/prompts/claude-prompt.txt"
+                fi
+                
+                echo "WORK_DIR=$WORK_DIR" >> $GITHUB_ENV
+                echo "PROMPT_FILE=$PROMPT_FILE" >> $GITHUB_ENV
+                echo "PROMPT_DIR=$WORK_DIR/prompts" >> $GITHUB_ENV
+                echo "npm_config_cache=$WORK_DIR/npm-cache" >> $GITHUB_ENV
+                
+                # ディレクトリ作成
+                mkdir -p "$WORK_DIR"/{prompts,npm-cache,logs}
+                
+                # ロック管理
+                echo "LOCK_DIR=/tmp/claude-locks" >> $GITHUB_ENV
+                mkdir -p /tmp/claude-locks
+            # PRコンテキストの作成とデバッグ
+            - name: Create isolated context and debug
+              run: |
+                echo "=== PR Context Debug ==="
+                echo "Event Name: ${{ github.event_name }}"
+                echo "PR Number: ${{ env.PR_NUMBER }}"
+                echo "Repository: ${{ github.repository }}"
+                echo "Run ID: ${{ github.run_id }}"
+                echo "Unique ID: ${{ env.UNIQUE_ID }}"
+                
+                if [ -n "${{ env.PR_NUMBER }}" ]; then
+                  # PR情報の安全な取得（イベントタイプに応じて）
+                  PR_TITLE=""
+                  PR_BRANCH=""
+                  PR_BODY=""
+                  
+                  case "${{ github.event_name }}" in
+                    "pull_request"|"pull_request_review"|"pull_request_review_comment")
+                      PR_TITLE="${{ github.event.pull_request.title }}"
+                      PR_BRANCH="${{ github.event.pull_request.head.ref }}"
+                      # PR bodyは安全に処理するため、一時ファイルに保存
+                      echo '${{ github.event.pull_request.body }}' > /tmp/pr_body_${{ env.UNIQUE_ID }}.txt
+                      PR_BODY_FILE="/tmp/pr_body_${{ env.UNIQUE_ID }}.txt"
+                      ;;
+                    "issue_comment")
+                      # issue_commentの場合、PRの詳細情報は取得できないため、GitHub APIを使用
+                      echo "⚠️ issue_commentイベントのため、PR詳細情報は制限されます"
+                      PR_TITLE="PR #${{ env.PR_NUMBER }} (from issue_comment)"
+                      PR_BRANCH="unknown"
+                      PR_BODY_FILE=""
+                      ;;
+                  esac
+                  
+                  echo "PR Title: $PR_TITLE"
+                  echo "PR Branch: $PR_BRANCH"
+                  
+                  # PR bodyからissue番号を抽出（安全に）
+                  ISSUE_NUMBER=""
+                  if [ -n "$PR_BODY_FILE" ] && [ -f "$PR_BODY_FILE" ]; then
+                    ISSUE_NUMBER=$(grep -oP 'Closes #\K\d+' "$PR_BODY_FILE" 2>/dev/null || echo "")
+                  fi
+                  echo "Issue Number from PR body: $ISSUE_NUMBER"
+                  
+                  # PR固有のコンテキストファイル作成（アトミック操作）
+                  CONTEXT_FILE="/tmp/claude-context-pr-${{ env.PR_NUMBER }}-${{ env.UNIQUE_ID }}.json"
+                  CONTEXT_LOCK="/tmp/claude-context-pr-${{ env.PR_NUMBER }}.lock"
+                  
+                  # ロック取得（最大30秒待機）
+                  LOCK_RETRY=0
+                  while [ $LOCK_RETRY -lt 30 ]; do
+                    if (set -C; echo "$$" > "$CONTEXT_LOCK") 2>/dev/null; then
+                      echo "✅ コンテキストロック取得成功"
+                      break
+                    fi
+                    echo "⏳ コンテキストロック待機... ($LOCK_RETRY/30)"
+                    sleep 1
+                    LOCK_RETRY=$((LOCK_RETRY + 1))
+                  done
+                  
+                  if [ $LOCK_RETRY -ge 30 ]; then
+                    echo "❌ コンテキストロック取得失敗"
+                    exit 1
+                  fi
+                  
+                  # コンテキストファイル作成（JSON形式）
+                  echo "{" > "$CONTEXT_FILE"
+                  echo "  \"pr_number\": \"${{ env.PR_NUMBER }}\"," >> "$CONTEXT_FILE"
+                  echo "  \"pr_title\": \"$PR_TITLE\"," >> "$CONTEXT_FILE"
+                  echo "  \"pr_branch\": \"$PR_BRANCH\"," >> "$CONTEXT_FILE"
+                  echo "  \"issue_number\": \"$ISSUE_NUMBER\"," >> "$CONTEXT_FILE"
+                  echo "  \"event_name\": \"${{ github.event_name }}\"," >> "$CONTEXT_FILE"
+                  echo "  \"repository\": \"${{ github.repository }}\"," >> "$CONTEXT_FILE"
+                  echo "  \"run_id\": \"${{ github.run_id }}\"," >> "$CONTEXT_FILE"
+                  echo "  \"unique_id\": \"${{ env.UNIQUE_ID }}\"," >> "$CONTEXT_FILE"
+                  echo "  \"created_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"," >> "$CONTEXT_FILE"
+                  echo "  \"workflow_isolation\": true" >> "$CONTEXT_FILE"
+                  echo "}" >> "$CONTEXT_FILE"
+                  
+                  # ロック解放
+                  rm -f "$CONTEXT_LOCK"
+                  
+                  echo "CONTEXT_FILE=$CONTEXT_FILE" >> $GITHUB_ENV
+                  echo "✅ PR固有のコンテキストファイル作成: $CONTEXT_FILE"
+                  
+                  # コンテキストファイルの内容を確認
+                  echo "=== コンテキストファイル内容 ==="
+                  cat "$CONTEXT_FILE"
+                  echo "=========================="
+                  
+                else
+                  echo "ℹ️ PRではないイベントです（Issue専用処理）"
+                  # Issue専用のコンテキストファイル作成
+                  CONTEXT_FILE="/tmp/claude-context-issue-${{ github.event.issue.number || 'unknown' }}-${{ env.UNIQUE_ID }}.json"
+                  echo "{" > "$CONTEXT_FILE"
+                  echo "  \"issue_number\": \"${{ github.event.issue.number || 'unknown' }}\"," >> "$CONTEXT_FILE"
+                  echo "  \"event_name\": \"${{ github.event_name }}\"," >> "$CONTEXT_FILE"
+                  echo "  \"repository\": \"${{ github.repository }}\"," >> "$CONTEXT_FILE"
+                  echo "  \"run_id\": \"${{ github.run_id }}\"," >> "$CONTEXT_FILE"
+                  echo "  \"unique_id\": \"${{ env.UNIQUE_ID }}\"," >> "$CONTEXT_FILE"
+                  echo "  \"created_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"," >> "$CONTEXT_FILE"
+                  echo "  \"workflow_isolation\": true" >> "$CONTEXT_FILE"
+                  echo "}" >> "$CONTEXT_FILE"
+                  echo "CONTEXT_FILE=$CONTEXT_FILE" >> $GITHUB_ENV
+                  echo "✅ Issue固有のコンテキストファイル作成: $CONTEXT_FILE"
+                fi
+            # 並行実行制御（ロック取得）
+            - name: Acquire execution slot
+              run: |
+                MAX_CONCURRENT=5
+                RETRY_COUNT=0
+                MAX_RETRIES=60
+                
+                echo "=== 実行スロット取得 ==="
+                
+                while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+                  # 実行中のプロセス数を確認（改行文字を除去）
+                  RUNNING=$(ps aux | grep -c "[c]laude-code" 2>/dev/null | tr -d '\n' || echo "0")
+                  LOCKS=$(ls -1 "$LOCK_DIR" 2>/dev/null | wc -l | tr -d '\n' || echo "0")
+                  
+                  # 数値であることを確認
+                  if ! [[ "$RUNNING" =~ ^[0-9]+$ ]]; then
+                    RUNNING=0
+                  fi
+                  if ! [[ "$LOCKS" =~ ^[0-9]+$ ]]; then
+                    LOCKS=0
+                  fi
+                  
+                  echo "実行中: プロセス=$RUNNING, ロック=$LOCKS"
+                  
+                  # より大きい方を採用
+                  if [ $RUNNING -gt $LOCKS ]; then
+                    CURRENT=$RUNNING
+                  else
+                    CURRENT=$LOCKS
+                  fi
+                  
+                  if [ $CURRENT -lt $MAX_CONCURRENT ]; then
+                    # ロック取得試行
+                    LOCK_FILE="$LOCK_DIR/lock-$$-$UNIQUE_ID"
+                    if (set -C; echo "$$" > "$LOCK_FILE") 2>/dev/null; then
+                      echo "LOCK_FILE=$LOCK_FILE" >> $GITHUB_ENV
+                      echo "✅ ロック取得成功"
+                      break
+                    fi
+                  fi
+                  
+                  echo "⏳ 30秒待機... (試行 $((RETRY_COUNT+1))/$MAX_RETRIES)"
+                  sleep 30
+                  RETRY_COUNT=$((RETRY_COUNT + 1))
+                done
+                
+                if [ ! -f "${LOCK_FILE:-}" ]; then
+                  echo "❌ 実行スロットを取得できませんでした"
+                  exit 1
+                fi
+            # システムチェック
+            - name: System health check
+              run: |
+                echo "=== システムヘルスチェック ==="
+                
+                # メモリ（改行文字除去と数値検証）
+                MEM_AVAILABLE=$(free -m | awk 'NR==2{print $7}' | tr -d '\n' || echo "0")
+                if ! [[ "$MEM_AVAILABLE" =~ ^[0-9]+$ ]]; then
+                  MEM_AVAILABLE=0
+                fi
+                echo "利用可能メモリ: ${MEM_AVAILABLE}MB"
+                
+                if [ "$MEM_AVAILABLE" -lt 1024 ]; then
+                  echo "⚠️ メモリ不足！クリーンアップ実行..."
+                  sync
+                  echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+                fi
+                
+                # ディスク（改行文字除去と数値検証）
+                DISK_USAGE=$(df -h / | awk 'NR==2{print $5}' | sed 's/%//' | tr -d '\n' || echo "0")
+                if ! [[ "$DISK_USAGE" =~ ^[0-9]+$ ]]; then
+                  DISK_USAGE=0
+                fi
+                echo "ディスク使用率: ${DISK_USAGE}%"
+            # 事前クリーンアップ
+            - name: Pre-cleanup
+              run: |
+                echo "=== 事前クリーンアップ ==="
+                
+                # 古いプロセスを終了（5分以上）
+                ps aux | grep "[c]laude-code" | while read -r line; do
+                  PID=$(echo "$line" | awk '{print $2}' | tr -d '\n')
+                  TIME=$(echo "$line" | awk '{print $10}' | tr -d '\n')
+                  
+                  # PIDが数値であることを確認
+                  if ! [[ "$PID" =~ ^[0-9]+$ ]]; then
+                    continue
+                  fi
+                  
+                  if [[ "$TIME" =~ ^[0-9]+:[0-9]+$ ]]; then
+                    MINUTES=$(echo "$TIME" | cut -d: -f1)
+                    if [[ "$MINUTES" =~ ^[0-9]+$ ]] && [ "$MINUTES" -ge 5 ]; then
+                      echo "古いプロセス終了: PID=$PID"
+                      kill -TERM "$PID" 2>/dev/null || true
+                    fi
+                  fi
+                done
+                
+                # npm完全クリーンアップ
+                npm uninstall -g @anthropic-ai/claude-code 2>/dev/null || true
+                
+                # npm rootの安全な取得
+                NPM_ROOT=$(npm root -g 2>/dev/null || echo "/usr/local/lib/node_modules")
+                if [ -d "$NPM_ROOT/@anthropic-ai/claude-code" ]; then
+                  rm -rf "$NPM_ROOT/@anthropic-ai/claude-code" 2>/dev/null || true
+                fi
+                if [ -d "$NPM_ROOT/@anthropic-ai" ]; then
+                  find "$NPM_ROOT/@anthropic-ai" -name ".claude-code-*" -type d -exec rm -rf {} + 2>/dev/null || true
+                fi
+                
+                npm cache clean --force 2>/dev/null || true
+                
+                # 古い一時ファイルを削除（24時間以上）
+                find /tmp -name "claude-*" -type d -mmin +1440 -exec rm -rf {} + 2>/dev/null || true
+                find "${{ runner.temp }}" -name "claude-*" -type d -mmin +1440 -exec rm -rf {} + 2>/dev/null || true
+              continue-on-error: true
+            # リポジトリチェックアウト
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 1
+                  clean: true
+                  token: ${{ secrets.GH_PAT }}
+
+            # プライベートアクションリポジトリをクローン
+            - name: Clone private action repositories
+              run: |
+                echo "=== プライベートアクションリポジトリをクローン ==="
+                
+                # .github/actionsディレクトリを作成（チェックアウトディレクトリ内）
+                mkdir -p clone
+
+                # claude-code-actionをクローン
+                echo "claude-code-actionをクローン中..."
+                git clone https://${{ secrets.GH_PAT }}@github.com/hasegama/claude-code-action.git \
+                  "./clone/claude-code-action"
+                
+                # .github/actionsディレクトリを作成（チェックアウトディレクトリ内）
+                mkdir -p clone/claude-code-action/clone
+                
+                # claude-code-base-actionをクローン
+                echo "claude-code-base-actionをクローン中..."
+                git clone https://${{ secrets.GH_PAT }}@github.com/hasegama/claude-code-base-action.git \
+                  "./clone/claude-code-action/clone/claude-code-base-action"
+                
+                echo "✅ プライベートアクションのクローン完了"
+                
+                # アクションパスを環境変数に設定
+                echo "CLONE_PWD=$(pwd)" >> $GITHUB_ENV
+
+            # アクションの依存関係をインストール
+            - name: Setup action dependencies
+              run: |
+                echo "=== アクションの依存関係をセットアップ ==="
+                
+                # 現在のディレクトリを保存
+                CLONE_PWD=$(pwd)
+
+                # claude-code-actionの依存関係
+                cd "./clone/claude-code-action"
+                if [ -f "package.json" ]; then
+                  npm install
+                fi
+                # 元のディレクトリに戻る
+                cd "$CLONE_PWD"
+                
+                # claude-code-base-actionの依存関係
+                cd "./clone/claude-code-action/clone/claude-code-base-action"
+                if [ -f "package.json" ]; then
+                  npm install
+                fi
+                # 元のディレクトリに戻る
+                cd "$CLONE_PWD"
+                
+                echo "✅ 依存関係のセットアップ完了"
+            # ランダム遅延
+            - name: Random delay
+              run: |
+                DELAY=$((RANDOM % 10 + 5))
+                echo "スパイク回避: ${DELAY}秒待機"
+                sleep $DELAY
+            # Claude Code実行（1回目）
+            - name: Run Claude Code
+              id: claude
+              uses: ./clone/claude-code-action  # ローカルパスを使用
+              with:
+                  github_token: ${{ secrets.GH_PAT }}
+                  allowed_tools: 'mcp__github_file_ops__create_issue,mcp__github_file_ops__update_issue_comment,mcp__github_file_ops__create_pull_request,mcp__github_file_ops__list_issues,mcp__github_file_ops__commit_files,mcp__github_file_ops__delete_files,Bash,Read,Write,Edit,Glob,Grep'
+                  use_oauth: 'true'
+                  claude_access_token: ${{ secrets.CLAUDE_ACCESS_TOKEN }}
+                  claude_refresh_token: ${{ secrets.CLAUDE_REFRESH_TOKEN }}
+                  claude_expires_at: ${{ secrets.CLAUDE_EXPIRES_AT }}
+                  custom_instructions: |
+                    必ず日本語で応答してください。
+                    コメント、説明、エラーメッセージもすべて日本語にしてください。
+                    コードのコメントも日本語で書いてください。
+                    
+                    重要: 環境変数CONTEXT_FILEとPR_NUMBERを確認し、正しいPRコンテキストで作業していることを確認してください。
+                    異なるPRのコメントや情報を混在させないよう細心の注意を払ってください。
+              env:
+                PROMPT_FILE: ${{ env.PROMPT_FILE }}
+                PROMPT_DIR: ${{ env.PROMPT_DIR }}
+                npm_config_cache: ${{ env.npm_config_cache }}
+                NODE_OPTIONS: "--max-old-space-size=2048"
+                JOBS: "1"
+                UV_THREADPOOL_SIZE: "2"
+                ANTHROPIC_DISABLE_CACHE: "true"
+                CLAUDE_NO_CACHE: "1"
+                CONTEXT_FILE: ${{ env.CONTEXT_FILE }}
+                PR_NUMBER: ${{ env.PR_NUMBER }}
+              continue-on-error: true
+              timeout-minutes: 60
+            # 1回目失敗時の待機
+            - name: Wait before retry (1)
+              if: steps.claude.outcome == 'failure'
+              run: |
+                echo "❌ 1回目失敗。60秒後にリトライします..."
+                
+                # エラー内容を確認
+                EXIT_CODE="${{ steps.claude.outputs.exit-code }}"
+                # 空文字や未定義の場合のデフォルト値設定
+                if [ -z "$EXIT_CODE" ]; then
+                  EXIT_CODE="1"
+                fi
+                
+                if [ "$EXIT_CODE" = "137" ]; then
+                  echo "メモリ不足エラー検出。メモリクリーンアップ実行..."
+                  sync
+                  echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+                  sleep 120
+                else
+                  sleep 60
+                fi
+            # Claude Code実行（2回目）
+            - name: Run Claude Code (Retry 1)
+              if: steps.claude.outcome == 'failure'
+              id: claude-retry1
+              uses: ./clone/claude-code-action  # ローカルパスを使用
+              with:
+                  github_token: ${{ secrets.GH_PAT }}
+                  allowed_tools: 'mcp__github_file_ops__create_issue,mcp__github_file_ops__update_issue_comment,mcp__github_file_ops__create_pull_request,mcp__github_file_ops__list_issues,mcp__github_file_ops__commit_files,mcp__github_file_ops__delete_files,Bash,Read,Write,Edit,Glob,Grep'
+                  use_oauth: 'true'
+                  claude_access_token: ${{ secrets.CLAUDE_ACCESS_TOKEN }}
+                  claude_refresh_token: ${{ secrets.CLAUDE_REFRESH_TOKEN }}
+                  claude_expires_at: ${{ secrets.CLAUDE_EXPIRES_AT }}
+                  custom_instructions: |
+                    必ず日本語で応答してください。
+                    コメント、説明、エラーメッセージもすべて日本語にしてください。
+                    コードのコメントも日本語で書いてください。
+                    
+                    重要: 環境変数CONTEXT_FILEとPR_NUMBERを確認し、正しいPRコンテキストで作業していることを確認してください。
+                    異なるPRのコメントや情報を混在させないよう細心の注意を払ってください。
+              env:
+                PROMPT_FILE: ${{ env.PROMPT_FILE }}
+                PROMPT_DIR: ${{ env.PROMPT_DIR }}
+                npm_config_cache: ${{ env.npm_config_cache }}
+                NODE_OPTIONS: "--max-old-space-size=2048"
+                JOBS: "1"
+                UV_THREADPOOL_SIZE: "2"
+                ANTHROPIC_DISABLE_CACHE: "true"
+                CLAUDE_NO_CACHE: "1"
+                CONTEXT_FILE: ${{ env.CONTEXT_FILE }}
+                PR_NUMBER: ${{ env.PR_NUMBER }}
+              continue-on-error: true
+              timeout-minutes: 60
+            # 2回目失敗時の待機
+            - name: Wait before retry (2)
+              if: steps.claude.outcome == 'failure' && steps.claude-retry1.outcome == 'failure'
+              run: |
+                echo "❌ 2回目も失敗。90秒後に最終リトライします..."
+                sleep 90
+            # Claude Code実行（3回目・最終）
+            - name: Run Claude Code (Retry 2)
+              if: steps.claude.outcome == 'failure' && steps.claude-retry1.outcome == 'failure'
+              id: claude-retry2
+              uses: ./clone/claude-code-action  # ローカルパスを使用
+              with:
+                  github_token: ${{ secrets.GH_PAT }}
+                  allowed_tools: 'mcp__github_file_ops__create_issue,mcp__github_file_ops__update_issue_comment,mcp__github_file_ops__create_pull_request,mcp__github_file_ops__list_issues,mcp__github_file_ops__commit_files,mcp__github_file_ops__delete_files,Bash,Read,Write,Edit,Glob,Grep'
+                  use_oauth: 'true'
+                  claude_access_token: ${{ secrets.CLAUDE_ACCESS_TOKEN }}
+                  claude_refresh_token: ${{ secrets.CLAUDE_REFRESH_TOKEN }}
+                  claude_expires_at: ${{ secrets.CLAUDE_EXPIRES_AT }}
+                  custom_instructions: |
+                    必ず日本語で応答してください。
+                    コメント、説明、エラーメッセージもすべて日本語にしてください。
+                    コードのコメントも日本語で書いてください。
+                    
+                    重要: 環境変数CONTEXT_FILEとPR_NUMBERを確認し、正しいPRコンテキストで作業していることを確認してください。
+                    異なるPRのコメントや情報を混在させないよう細心の注意を払ってください。
+              env:
+                PROMPT_FILE: ${{ env.PROMPT_FILE }}
+                PROMPT_DIR: ${{ env.PROMPT_DIR }}
+                npm_config_cache: ${{ env.npm_config_cache }}
+                NODE_OPTIONS: "--max-old-space-size=2048"
+                JOBS: "1"
+                UV_THREADPOOL_SIZE: "2"
+                ANTHROPIC_DISABLE_CACHE: "true"
+                CLAUDE_NO_CACHE: "1"
+                CONTEXT_FILE: ${{ env.CONTEXT_FILE }}
+                PR_NUMBER: ${{ env.PR_NUMBER }}
+              timeout-minutes: 60
+            # 最終結果の確認
+            - name: Check final result
+              run: |
+                CLAUDE_OUTCOME="${{ steps.claude.outcome }}"
+                RETRY1_OUTCOME="${{ steps.claude-retry1.outcome }}"
+                RETRY2_OUTCOME="${{ steps.claude-retry2.outcome }}"
+                
+                if [ "$CLAUDE_OUTCOME" = "success" ] || \
+                   [ "$RETRY1_OUTCOME" = "success" ] || \
+                   [ "$RETRY2_OUTCOME" = "success" ]; then
+                  echo "✅ Claude Code実行成功！"
+                else
+                  echo "❌ すべての試行が失敗しました"
+                  echo "結果: claude=$CLAUDE_OUTCOME, retry1=$RETRY1_OUTCOME, retry2=$RETRY2_OUTCOME"
+                  exit 1
+                fi
+            # 後処理クリーンアップ（必須）
+            - name: Post-cleanup
+              if: always()
+              run: |
+                echo "=== 後処理クリーンアップ ==="
+                
+                # ロック解放（最重要）
+                if [ -f "${LOCK_FILE:-}" ]; then
+                  rm -f "$LOCK_FILE"
+                  echo "✅ ロック解放完了"
+                fi
+                
+                # プロセスクリーンアップ
+                pkill -f "claude-code.*$UNIQUE_ID" 2>/dev/null || true
+                
+                # 作業ディレクトリ削除
+                if [ -d "${WORK_DIR:-}" ]; then
+                  rm -rf "$WORK_DIR"
+                  echo "✅ 作業ディレクトリ削除完了"
+                fi
+                
+                # PR固有のコンテキストファイル削除
+                if [ -f "${CONTEXT_FILE:-}" ]; then
+                  rm -f "$CONTEXT_FILE"
+                  echo "✅ コンテキストファイル削除完了"
+                fi
+                
+                # 古いロックファイルのクリーンアップ（1時間以上）
+                find "$LOCK_DIR" -type f -mmin +60 -delete 2>/dev/null || true
+                
+                # 一時ファイルのクリーンアップ
+                rm -f "/tmp/pr_body_${{ env.UNIQUE_ID }}.txt" 2>/dev/null || true
+                
+                # 古いコンテキストファイルのクリーンアップ（24時間以上）
+                find /tmp -name "claude-context-pr-*.json" -type f -mmin +1440 -delete 2>/dev/null || true
+                find /tmp -name "claude-context-issue-*.json" -type f -mmin +1440 -delete 2>/dev/null || true
+                find /tmp -name "claude-context-pr-*.lock" -type f -mmin +60 -delete 2>/dev/null || true
+                find /tmp -name "pr_body_*.txt" -type f -mmin +60 -delete 2>/dev/null || true
