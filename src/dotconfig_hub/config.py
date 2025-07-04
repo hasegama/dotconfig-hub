@@ -200,19 +200,34 @@ class Config:
                 if source.exists() or target.exists():
                     mapping[source] = target
             else:
-                # For glob patterns, match files and create relative mappings
+                # For glob patterns, match files from both source and target
                 source_pattern = project_dir / file_pattern
-                source_files = glob.glob(str(source_pattern), recursive=True)
+                target_pattern = target_dir / file_pattern
                 
+                # Get files from both sides
+                source_files = glob.glob(str(source_pattern), recursive=True)
+                target_files = glob.glob(str(target_pattern), recursive=True)
+                
+                # Process source files
                 for source_file in source_files:
                     source_path = Path(source_file)
-                    # Calculate relative path from project_dir
                     try:
                         relative_path = source_path.relative_to(project_dir)
                         target_path = target_dir / relative_path
                         mapping[source_path] = target_path
                     except ValueError:
-                        # Skip if not relative to project_dir
+                        continue
+                
+                # Process target files that don't have corresponding source files
+                for target_file in target_files:
+                    target_path = Path(target_file)
+                    try:
+                        relative_path = target_path.relative_to(target_dir)
+                        source_path = project_dir / relative_path
+                        # Only add if not already in mapping
+                        if source_path not in mapping:
+                            mapping[source_path] = target_path
+                    except ValueError:
                         continue
         
         return mapping
