@@ -164,12 +164,14 @@ cython_debug/
 
 # GitHub
 # .github/
+.github_token
 
 # OS
 .DS_Store
 Thumbs.db
 
 # Project specific
+.mcp.json
 *.bak
 *.bak.*
 .ai-sync-history
@@ -177,6 +179,11 @@ Thumbs.db
 # Claude Code
 .claude
 CLAUDE.md
+
+# Development
+Dockerfile
+.pre-commit-config.yaml
+.devcontainer/
 
 # Instruction files in project directories (manage these centrally)
 my_project_init_template
