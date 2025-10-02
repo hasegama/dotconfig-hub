@@ -15,6 +15,7 @@ dotconfig-hub is a tool that helps you manage and sync your favorite development
 - **💬 Interactive Mode**: Friendly prompts when arguments are omitted
 - **📋 Smart Diff Display**: Content-based change detection with multiple viewing options (full, unified, context-only)
 - **🔒 Safe Operations**: Automatic backups and dry-run mode
+- **🔗 Project Tracking**: Automatically tracks which projects use which environment sets
 
 ## 🚀 Quick Start
 
@@ -69,6 +70,7 @@ uv add -e .
 ```
 ~/dotconfig-templates/          # Your central configuration hub
 ├── config.yaml                 # Defines environment sets and tools
+├── project_mapping.yaml        # Tracks which projects use which sets
 ├── my_project_init_template/    # Example environment set
 │   ├── .claude/                 # Claude configurations
 │   ├── .github/                 # GitHub workflows and templates
@@ -164,6 +166,15 @@ dotconfig-hub sync --auto-sync remote
 ```bash
 # Show configuration status
 dotconfig-hub list
+
+# Show tracked projects
+dotconfig-hub projects
+
+# Show projects using specific environment set
+dotconfig-hub projects --env-set my_project_init_template
+
+# Clean up missing projects from tracking
+dotconfig-hub projects --cleanup
 ```
 
 ## 💬 Interactive Mode
@@ -217,6 +228,24 @@ dotconfig-hub sync --auto-sync remote  # Push improvements to templates
 1. Add configuration to `~/dotconfig-templates/config.yaml`
 2. Create corresponding files in template directory
 3. Use `dotconfig-hub init` in projects to activate
+
+### Managing Tracked Projects
+
+dotconfig-hub automatically tracks projects in `project_mapping.yaml`:
+
+```yaml
+projects:
+  ~/workspace/my-python-app:
+    environment_sets:
+      - my_project_init_template
+      - python_dev
+    last_synced: 2024-01-15T10:30:00Z
+```
+
+This enables:
+- Viewing all projects using specific environment sets
+- Bulk operations across related projects
+- Impact analysis before updating templates
 
 ## 🎯 Use Cases
 
