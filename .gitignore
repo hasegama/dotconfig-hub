@@ -185,13 +185,27 @@ cython_debug/
 
 # GitHub
 .github_token
-.github/
+.github/*
+!.github/PULL_REQUEST_TEMPLATE.md
+!.github/ISSUE_TEMPLATE/
+.github/ISSUE_TEMPLATE/*
+!.github/ISSUE_TEMPLATE/1-bug-report.md
+!.github/ISSUE_TEMPLATE/2-feature-request.md
+
+!.github/workflows/
+.github/workflows/*
+!.github/workflows/claude.yml
+!.github/workflows/claude-code-review.yml
+
 
 # Instruction files in project directories (manage these centrally)
 .claude/
 CLAUDE.md
 
+.codex/
 AGENTS.md
+
+.gemini/
 
 # IDE
 .vscode/
@@ -223,3 +237,7 @@ my_project_init_template
 
 # Keep the .gitkeep files
 !.gitkeep
+
+# startpack
+node_modules
+.next
