@@ -1,8 +1,10 @@
 """Command-line interface for dotconfig-hub."""
 
 from pathlib import Path
+from typing import Optional
 
 import click
+import yaml
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
@@ -13,6 +15,39 @@ from .project_mapping import ProjectMapping
 from .sync import FileSyncer
 
 console = Console()
+
+
+def _load_templates_config(config_file: Path) -> Optional[dict]:
+    """Load and validate templates config.yaml.
+
+    Returns config dict on success, None on failure (with error printed to console).
+    Related: used by setup() and global_config() commands.
+    """
+    if not config_file.exists():
+        console.print(
+            f"[red]Error: config.yaml not found in {config_file.parent}[/red]"
+        )
+        console.print(
+            "[yellow]The templates directory should contain a config.yaml file[/yellow]"
+        )
+        return None
+
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            templates_config = yaml.safe_load(f)
+
+        if not templates_config or "environment_sets" not in templates_config:
+            console.print("[red]Error: Invalid config.yaml format[/red]")
+            console.print(
+                "[yellow]The config.yaml should contain 'environment_sets'[/yellow]"
+            )
+            return None
+
+        return templates_config
+
+    except Exception as e:
+        console.print(f"[red]Error reading templates config: {e}[/red]")
+        return None
 
 
 @click.group()
@@ -47,64 +82,63 @@ def setup(templates_dir: Path):
     """
     console.print("\n[bold blue]dotconfig-hub Setup[/bold blue]")
 
+    # Initialize project config to check for global defaults
+    project_config = ProjectConfig()
+
     # Prompt for templates directory if not provided
     if not templates_dir:
-        console.print("Please enter the path to your templates directory.")
-        console.print("[dim]Example: ~/dotconfig-templates[/dim]")
+        # Check for global configuration defaults
+        global_templates_source = project_config.get_global_templates_source()
+        global_env_sets = project_config.get_global_environment_sets()
 
-        while True:
-            templates_input = Prompt.ask("Templates directory path")
-            if not templates_input.strip():
-                console.print("[red]Please enter a valid path[/red]")
-                continue
-
-            templates_dir = (
-                Path(templates_input.strip("\"'").strip()).expanduser().resolve()
-            )
-            if templates_dir.exists() and templates_dir.is_dir():
-                break
-            else:
-                console.print(f"[red]Directory not found: {templates_dir}[/red]")
-                if not Confirm.ask("Try again?", default=True):
-                    console.print("[yellow]Setup cancelled[/yellow]")
-                    return
-
-    # Validate templates directory
-    templates_dir = templates_dir.resolve()
-    config_file = templates_dir / "config.yaml"
-
-    if not config_file.exists():
-        console.print(f"[red]Error: config.yaml not found in {templates_dir}[/red]")
-        console.print(
-            "[yellow]The templates directory should contain a config.yaml file[/yellow]"
-        )
-        return
-
-    # Load and validate templates config
-    try:
-        import yaml
-
-        with open(config_file, "r", encoding="utf-8") as f:
-            templates_config = yaml.safe_load(f)
-
-        if not templates_config or "environment_sets" not in templates_config:
-            console.print("[red]Error: Invalid config.yaml format[/red]")
+        if global_templates_source:
             console.print(
-                "[yellow]The config.yaml should contain 'environment_sets'[/yellow]"
+                f"[cyan]Found global default templates source: {global_templates_source}[/cyan]"
             )
-            return
+            if global_env_sets:
+                console.print(
+                    f"[cyan]Default environment sets: {', '.join(global_env_sets)}[/cyan]"
+                )
 
-        env_sets = [key for key in templates_config["environment_sets"].keys()]
-        console.print(
-            f"[green]Found {len(env_sets)} environment sets: {', '.join(env_sets)}[/green]"
-        )
+            # Ask if user wants to use global defaults
+            use_defaults = Confirm.ask("Use these defaults?", default=True)
+            if use_defaults:
+                templates_dir = global_templates_source
+            else:
+                console.print("Please enter a different templates directory path.")
 
-    except Exception as e:
-        console.print(f"[red]Error reading templates config: {e}[/red]")
+        # If no global defaults or user chose not to use them
+        if not templates_dir:
+            console.print("Please enter the path to your templates directory.")
+            console.print("[dim]Example: ~/dotconfig-templates[/dim]")
+
+            while True:
+                templates_input = Prompt.ask("Templates directory path")
+                if not templates_input.strip():
+                    console.print("[red]Please enter a valid path[/red]")
+                    continue
+
+                templates_dir = (
+                    Path(templates_input.strip("\"'").strip()).expanduser().resolve()
+                )
+                if templates_dir.exists() and templates_dir.is_dir():
+                    break
+                else:
+                    console.print(f"[red]Directory not found: {templates_dir}[/red]")
+                    if not Confirm.ask("Try again?", default=True):
+                        console.print("[yellow]Setup cancelled[/yellow]")
+                        return
+
+    # Validate templates directory and load config
+    templates_dir = templates_dir.resolve()
+    templates_config = _load_templates_config(templates_dir / "config.yaml")
+    if templates_config is None:
         return
 
-    # Initialize project config
-    project_config = ProjectConfig()
+    env_sets = [*templates_config["environment_sets"]]
+    console.print(
+        f"[green]Found {len(env_sets)} environment sets: {', '.join(env_sets)}[/green]"
+    )
 
     # Check if already configured
     if project_config.exists():
@@ -125,6 +159,135 @@ def setup(templates_dir: Path):
     console.print("\n[cyan]Next steps:[/cyan]")
     console.print("  1. Run 'dotconfig-hub init' to initialize your project")
     console.print("  2. Run 'dotconfig-hub list' to see available environment sets")
+
+
+@main.command()
+@click.option(
+    "--templates-dir",
+    "-t",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Path to templates directory",
+)
+@click.option(
+    "--env-sets",
+    "-e",
+    help="Comma-separated list of default environment sets",
+)
+def global_config(templates_dir: Path, env_sets: str) -> None:
+    """Configure global defaults for dotconfig-hub setup.
+
+    This command sets up global default values that will be suggested
+    when running 'dotconfig-hub setup' in new projects.
+
+    Examples
+    --------
+        dotconfig-hub global-config --templates-dir ~/dotconfig-templates
+        dotconfig-hub global-config -t ~/templates -e "default,common"
+
+    """
+    console.print("\n[bold blue]Global Configuration Setup[/bold blue]")
+
+    project_config = ProjectConfig()
+
+    # Handle templates directory
+    if not templates_dir:
+        current_global = project_config.get_global_templates_source()
+        if current_global:
+            console.print(
+                f"[cyan]Current global templates source: {current_global}[/cyan]"
+            )
+            if not Confirm.ask("Change templates directory?", default=False):
+                templates_dir = current_global
+
+        if not templates_dir:
+            console.print("Please enter the path to your default templates directory.")
+            console.print(
+                "[dim]This will be suggested when running 'dotconfig-hub setup'[/dim]"
+            )
+
+            while True:
+                templates_input = Prompt.ask("Templates directory path")
+                if not templates_input.strip():
+                    console.print("[red]Please enter a valid path[/red]")
+                    continue
+
+                templates_dir = (
+                    Path(templates_input.strip("\"'").strip()).expanduser().resolve()
+                )
+                if templates_dir.exists() and templates_dir.is_dir():
+                    break
+                else:
+                    console.print(f"[red]Directory not found: {templates_dir}[/red]")
+                    if not Confirm.ask("Try again?", default=True):
+                        console.print("[yellow]Global config cancelled[/yellow]")
+                        return
+
+    # Validate templates directory and load config
+    templates_dir = templates_dir.resolve()
+    templates_config = _load_templates_config(templates_dir / "config.yaml")
+    if templates_config is None:
+        return
+
+    available_env_sets = [*templates_config["environment_sets"]]
+    console.print(
+        f"[green]Available environment sets: {', '.join(available_env_sets)}[/green]"
+    )
+
+    # Handle environment sets
+    environment_sets = []
+    if env_sets:
+        environment_sets = [s.strip() for s in env_sets.split(",") if s.strip()]
+        # Validate environment sets
+        invalid_sets = [s for s in environment_sets if s not in available_env_sets]
+        if invalid_sets:
+            console.print(
+                f"[red]Invalid environment sets: {', '.join(invalid_sets)}[/red]"
+            )
+            console.print(
+                f"[yellow]Available sets: {', '.join(available_env_sets)}[/yellow]"
+            )
+            return
+    else:
+        current_global_env_sets = project_config.get_global_environment_sets()
+        if current_global_env_sets:
+            console.print(
+                f"[cyan]Current global environment sets: {', '.join(current_global_env_sets)}[/cyan]"
+            )
+            if not Confirm.ask("Change environment sets?", default=False):
+                environment_sets = current_global_env_sets
+
+        if not environment_sets:
+            console.print("Select default environment sets (comma-separated):")
+            console.print(f"[dim]Available: {', '.join(available_env_sets)}[/dim]")
+
+            env_input = Prompt.ask("Environment sets (optional)", default="")
+            if env_input.strip():
+                environment_sets = [
+                    s.strip() for s in env_input.split(",") if s.strip()
+                ]
+                invalid_sets = [
+                    s for s in environment_sets if s not in available_env_sets
+                ]
+                if invalid_sets:
+                    console.print(
+                        f"[red]Invalid environment sets: {', '.join(invalid_sets)}[/red]"
+                    )
+                    return
+
+    # Save global configuration
+    project_config.save_global_config(templates_dir, environment_sets)
+
+    console.print(f"[green]✓ Global templates source: {templates_dir}[/green]")
+    if environment_sets:
+        console.print(
+            f"[green]✓ Global environment sets: {', '.join(environment_sets)}[/green]"
+        )
+    console.print(
+        f"[dim]Global configuration saved to: {project_config.GLOBAL_CONFIG_PATH}[/dim]"
+    )
+    console.print(
+        "\n[cyan]These defaults will be suggested when running 'dotconfig-hub setup'[/cyan]"
+    )
 
 
 @main.command()
@@ -164,11 +327,9 @@ def init(env_set: str, force: bool):
     # Get available environment sets
     templates_config_path = project_config.get_templates_config_path()
     with open(templates_config_path, "r", encoding="utf-8") as f:
-        import yaml
-
         templates_config = yaml.safe_load(f)
 
-    available_sets = [key for key in templates_config["environment_sets"].keys()]
+    available_sets = [*templates_config["environment_sets"]]
 
     # Prompt for environment set if not provided
     if not env_set:
@@ -225,7 +386,7 @@ def init(env_set: str, force: bool):
     project_mapping.save_mapping()
 
     set_config = templates_config["environment_sets"][env_set]
-    tools = [key for key in set_config.get("tools", {}).keys()]
+    tools = [*set_config.get("tools", {})]
 
     console.print(f"[green]✓ Environment set '{env_set}' activated[/green]")
     console.print(f"[dim]Tools available: {', '.join(tools)}[/dim]")
@@ -410,8 +571,6 @@ def list():
     # Load templates config
     templates_config_path = project_config.get_templates_config_path()
     with open(templates_config_path, "r", encoding="utf-8") as f:
-        import yaml
-
         templates_config = yaml.safe_load(f)
 
     # Display available environment sets
@@ -424,7 +583,7 @@ def list():
         console.print(f"  {status} [cyan]{set_name}[/cyan]: {description}")
 
         if set_name in active_sets:
-            tools = [key for key in set_config.get("tools", {}).keys()]
+            tools = [*set_config.get("tools", {})]
             if tools:
                 console.print(f"    [dim]Tools: {', '.join(tools)}[/dim]")
 
