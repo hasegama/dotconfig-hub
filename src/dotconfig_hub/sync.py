@@ -27,7 +27,7 @@ class FileSyncer:
 
     def __init__(
         self, config: Config, project_mapping: Optional[ProjectMapping] = None
-    ):
+    ) -> None:
         """Initialize the file syncer.
 
         Args:
@@ -149,7 +149,7 @@ class FileSyncer:
             self.console.print(
                 f"[yellow]Multiple matches found for '{file_name}':[/yellow]"
             )
-            for source, target in matching_files.items():
+            for _source, target in matching_files.items():
                 self.console.print(f"  • {target}")
             self.console.print(
                 "[yellow]Please be more specific or use --tool option[/yellow]"
@@ -328,7 +328,7 @@ class FileSyncer:
         while True:
             # Display action choices
             self.console.print("\n[bold cyan]Choose action:[/bold cyan]")
-            for key, (desc, _) in choices.items():
+            for _key, (desc, _) in choices.items():
                 self.console.print(f"  {desc}")
 
             choice = Prompt.ask(
@@ -350,7 +350,7 @@ class FileSyncer:
 
             return action
 
-    def _perform_sync(self, source: Path, target: Path, direction: str):
+    def _perform_sync(self, source: Path, target: Path, direction: str) -> None:
         """Perform the actual file sync.
 
         Args:
@@ -367,7 +367,7 @@ class FileSyncer:
             # Project → Hub
             self._copy_file(target, source, create_backup=True)
 
-    def _copy_file(self, src: Path, dst: Path, create_backup: bool = True):
+    def _copy_file(self, src: Path, dst: Path, create_backup: bool = True) -> None:
         """Copy file with optional backup.
 
         Args:
