@@ -232,8 +232,10 @@ Dockerfile
 .pre-commit-config.yaml
 .devcontainer/
 
-# Instruction files in project directories (manage these centrally)
+# Template directories: content is tracked via force-add (git add -f)
+# because they contain files matching other ignore rules (.vscode/, CLAUDE.md, etc.)
 my_project_init_template
+minimal_template
 
 # Keep the .gitkeep files
 !.gitkeep

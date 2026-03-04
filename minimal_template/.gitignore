@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+dist/
+
+# Virtual environments
+.venv/
+
+# Environment
+.env
+
+# OS
+.DS_Store
