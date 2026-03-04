@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
+from .compare import EnvSetComparer
 from .config import Config
 from .project_config import ProjectConfig
 from .project_mapping import ProjectMapping
@@ -700,6 +701,100 @@ def projects(env_set: str, cleanup: bool) -> None:
                 console.print(
                     f"  • [cyan]{set_name}[/cyan]: {count} project{'s' if count > 1 else ''}"
                 )
+
+
+@main.command()
+@click.argument("set_a")
+@click.argument("set_b")
+@click.option("--tool", "-t", help="Filter comparison to a specific tool")
+@click.option(
+    "--file",
+    "-f",
+    "file_pattern",
+    help="Filter to specific file pattern (supports wildcards like *.toml, configs/*)",
+)
+@click.option(
+    "--merge",
+    "-m",
+    is_flag=True,
+    help="Enable interactive merge mode (default is compare-only)",
+)
+@click.option(
+    "--dry-run",
+    "-n",
+    is_flag=True,
+    help="Preview merge without writing files (requires --merge)",
+)
+def compare(
+    set_a: str,
+    set_b: str,
+    tool: str,
+    file_pattern: str,
+    merge: bool,
+    dry_run: bool,
+) -> None:
+    """Compare files across two environment sets.
+
+    Finds common files between SET_A and SET_B by matching relative paths
+    within shared tools, then displays their differences. Use --merge to
+    interactively copy selected files between sets.
+
+    This command operates entirely within the hub (template repository)
+    and does not require a project to be set up.
+
+    Examples
+    --------
+        dotconfig-hub compare my_project_init_template minimal_template
+        dotconfig-hub compare set_a set_b --tool vscode
+        dotconfig-hub compare set_a set_b --file "*.json"
+        dotconfig-hub compare set_a set_b --merge
+        dotconfig-hub compare set_a set_b --merge --dry-run
+
+    """
+    console.print("\n[bold blue]dotconfig-hub Compare[/bold blue]")
+
+    # Load hub config directly (no project setup required)
+    cfg = Config()
+
+    # Validate environment sets exist
+    available_sets = cfg.get_environment_sets()
+    for name in (set_a, set_b):
+        if name not in available_sets:
+            console.print(f"[red]Environment set '{name}' not found[/red]")
+            console.print(
+                f"[yellow]Available sets: {', '.join(available_sets)}[/yellow]"
+            )
+            return
+
+    if set_a == set_b:
+        console.print("[yellow]Cannot compare an environment set with itself[/yellow]")
+        return
+
+    comparer = EnvSetComparer(cfg, console)
+
+    try:
+        if merge:
+            if dry_run:
+                console.print(
+                    "[yellow]DRY RUN MODE - No files will be modified[/yellow]\n"
+                )
+            comparer.merge(set_a, set_b, tool, file_pattern, dry_run)
+        else:
+            if dry_run:
+                console.print(
+                    "[yellow]--dry-run has no effect without --merge[/yellow]\n"
+                )
+            diff_count = comparer.compare(set_a, set_b, tool, file_pattern)
+            if diff_count > 0:
+                console.print(
+                    f"\n[dim]Found {diff_count} difference(s). "
+                    f"Use --merge to interactively merge.[/dim]"
+                )
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Compare cancelled by user[/yellow]")
+
 
 
 def _display_results(results: dict, dry_run: bool) -> None:

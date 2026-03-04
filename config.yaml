@@ -36,3 +36,16 @@ environment_sets:
         files:
           - .gitignore
           # - .gitattributes
+
+  # Minimal project template for lightweight projects
+  minimal_template:
+    description: "Minimal project template with basic settings"
+    tools:
+      vscode:
+        project_dir: minimal_template
+        files:
+          - .vscode/settings.json
+      git_config:
+        project_dir: minimal_template
+        files:
+          - .gitignore
