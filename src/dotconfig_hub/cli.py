@@ -1,5 +1,6 @@
 """Command-line interface for dotconfig-hub."""
 
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -52,7 +53,7 @@ def _load_templates_config(config_file: Path) -> Optional[dict]:
 
 @click.group()
 @click.version_option()
-def main():
+def main() -> None:
     """dotconfig-hub - Central management for favorite dotfiles and configuration templates.
 
     This tool helps you manage and distribute your favorite dotfiles and configuration
@@ -68,7 +69,7 @@ def main():
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     help="Path to templates directory",
 )
-def setup(templates_dir: Path):
+def setup(templates_dir: Path) -> None:
     """Set up dotconfig-hub with templates directory.
 
     This command configures the templates source directory for the current project.
@@ -298,7 +299,7 @@ def global_config(templates_dir: Path, env_sets: str) -> None:
     is_flag=True,
     help="Force initialization even if already configured",
 )
-def init(env_set: str, force: bool):
+def init(env_set: str, force: bool) -> None:
     """Initialize current project with configuration templates.
 
     This command sets up the current project to use specific environment sets
@@ -410,7 +411,7 @@ def init(env_set: str, force: bool):
     type=click.Choice(["local", "remote"]),
     help="Automatically sync in specified direction without prompting",
 )
-def sync(tool: str, env_set: str, file: str, dry_run: bool, auto_sync: str):
+def sync(tool: str, env_set: str, file: str, dry_run: bool, auto_sync: str) -> None:
     """Synchronize configuration files between templates and project.
 
     This command syncs files from the configured templates to the current project
@@ -534,7 +535,7 @@ def sync(tool: str, env_set: str, file: str, dry_run: bool, auto_sync: str):
 
 
 @main.command()
-def list():
+def list() -> None:
     """List available environment sets and tools.
 
     Shows the currently configured templates and active environment sets
@@ -595,7 +596,7 @@ def list():
 @main.command()
 @click.option("--env-set", "-e", help="Show projects using specific environment set")
 @click.option("--cleanup", is_flag=True, help="Remove missing projects from mapping")
-def projects(env_set: str, cleanup: bool):
+def projects(env_set: str, cleanup: bool) -> None:
     """List projects tracked by dotconfig-hub.
 
     Shows all projects using the templates and their associated environment sets.
@@ -679,11 +680,9 @@ def projects(env_set: str, cleanup: bool):
         # Format timestamp
         if last_synced != "Never":
             try:
-                from datetime import datetime
-
                 dt = datetime.fromisoformat(last_synced)
                 last_synced = dt.strftime("%Y-%m-%d %H:%M")
-            except:
+            except (ValueError, TypeError):
                 pass
 
         table.add_row(path, env_sets, last_synced)
@@ -703,7 +702,7 @@ def projects(env_set: str, cleanup: bool):
                 )
 
 
-def _display_results(results: dict, dry_run: bool):
+def _display_results(results: dict, dry_run: bool) -> None:
     """Display sync results in a table.
 
     Args:

@@ -1,10 +1,13 @@
 """Project mapping management for tracking which projects use which environment sets."""
 
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectMapping:
@@ -12,7 +15,7 @@ class ProjectMapping:
 
     MAPPING_FILENAME = "project_mapping.yaml"
 
-    def __init__(self, templates_dir: Path):
+    def __init__(self, templates_dir: Path) -> None:
         """Initialize project mapping.
 
         Args:
@@ -36,11 +39,11 @@ class ProjectMapping:
                 if "projects" not in data:
                     data["projects"] = {}
                 return data
-        except Exception as e:
-            print(f"Warning: Error loading project mapping: {e}")
+        except yaml.YAMLError as e:
+            logger.warning("Error loading project mapping: %s", e)
             return {"projects": {}}
 
-    def save_mapping(self):
+    def save_mapping(self) -> None:
         """Save current mapping to project_mapping.yaml."""
         self.mapping_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -76,7 +79,7 @@ class ProjectMapping:
 
         return str(abs_path)
 
-    def add_project(self, project_path: Path, environment_sets: List[str]):
+    def add_project(self, project_path: Path, environment_sets: List[str]) -> None:
         """Add or update a project's environment set mapping.
 
         Args:
@@ -92,7 +95,7 @@ class ProjectMapping:
             "last_synced": datetime.now().isoformat(),
         }
 
-    def remove_project(self, project_path: Path):
+    def remove_project(self, project_path: Path) -> None:
         """Remove a project from the mapping.
 
         Args:
@@ -160,7 +163,7 @@ class ProjectMapping:
             Dictionary mapping environment set names to usage counts
 
         """
-        usage = {}
+        usage: Dict[str, int] = {}
 
         for info in self.mapping_data["projects"].values():
             for env_set in info.get("environment_sets", []):
@@ -168,7 +171,7 @@ class ProjectMapping:
 
         return usage
 
-    def update_last_synced(self, project_path: Path):
+    def update_last_synced(self, project_path: Path) -> None:
         """Update the last_synced timestamp for a project.
 
         Args:
