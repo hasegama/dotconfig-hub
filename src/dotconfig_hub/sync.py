@@ -195,29 +195,16 @@ class FileSyncer:
         """
         results = {}
 
+        # Determine which environment sets to sync
         if env_set:
-            # Sync specific environment set
             env_config = self.config.get_environment_set(env_set)
             if not env_config:
                 self.console.print(
                     f"[yellow]Environment set '{env_set}' not found[/yellow]"
                 )
                 return results
-
-            self.console.print(
-                f"\n[bold magenta]Environment Set: {env_set}[/bold magenta]"
-            )
-            if desc := env_config.get("description"):
-                self.console.print(f"[dim]{desc}[/dim]")
-
-            tools = self.config.get_tools(env_set)
-            for tool in tools:
-                self.console.print(f"\n[bold blue]Syncing {tool}...[/bold blue]")
-                results[f"{env_set}/{tool}"] = self.sync_tool(
-                    tool, target_dir, auto_sync, dry_run, env_set
-                )
+            env_sets = [env_set]
         else:
-            # Sync all environment sets
             env_sets = self.config.get_environment_sets()
             if not env_sets:
                 self.console.print(
@@ -225,20 +212,20 @@ class FileSyncer:
                 )
                 return results
 
-            for set_name in env_sets:
-                env_config = self.config.get_environment_set(set_name)
-                self.console.print(
-                    f"\n[bold magenta]Environment Set: {set_name}[/bold magenta]"
-                )
-                if desc := env_config.get("description"):
-                    self.console.print(f"[dim]{desc}[/dim]")
+        for set_name in env_sets:
+            env_config = self.config.get_environment_set(set_name)
+            self.console.print(
+                f"\n[bold magenta]Environment Set: {set_name}[/bold magenta]"
+            )
+            if desc := env_config.get("description"):
+                self.console.print(f"[dim]{desc}[/dim]")
 
-                tools = self.config.get_tools(set_name)
-                for tool in tools:
-                    self.console.print(f"\n[bold blue]Syncing {tool}...[/bold blue]")
-                    results[f"{set_name}/{tool}"] = self.sync_tool(
-                        tool, target_dir, auto_sync, dry_run, set_name
-                    )
+            tools = self.config.get_tools(set_name)
+            for tool in tools:
+                self.console.print(f"\n[bold blue]Syncing {tool}...[/bold blue]")
+                results[f"{set_name}/{tool}"] = self.sync_tool(
+                    tool, target_dir, auto_sync, dry_run, set_name
+                )
 
         return results
 
@@ -309,7 +296,7 @@ class FileSyncer:
             self._perform_sync(source, target, direction)
             self.console.print(f"[green]✓ Synced {target.name}[/green]")
         else:
-            action = "Would sync" if not dry_run else "Would sync (dry run)"
+            action = "Would sync (dry run)"
             if direction == SyncDirection.TO_LOCAL:
                 self.console.print(f"[cyan]{action}: Hub → Project[/cyan]")
             else:
