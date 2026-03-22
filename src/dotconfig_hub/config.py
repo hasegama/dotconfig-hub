@@ -2,7 +2,7 @@
 
 import glob
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import yaml
 
@@ -58,6 +58,50 @@ class Config:
                 }
             }
             del self.config_data["tools"]
+
+    @staticmethod
+    def _parse_file_entry(entry: Union[str, Dict[str, Any]]) -> Tuple[str, bool]:
+        """Parse a file entry from the YAML config into (pattern, init_only).
+
+        Supports two formats:
+          - string: "path/to/file" -> (pattern, False)
+          - dict:   {path: "path/to/file", init_only: true} -> (pattern, True)
+
+        Related: Issue #6 - init_only delivery mode
+        """
+        if isinstance(entry, str):
+            return entry, False
+        if isinstance(entry, dict):
+            return entry["path"], entry.get("init_only", False)
+        msg = f"Unexpected file entry type: {type(entry)}"
+        raise TypeError(msg)
+
+    def get_init_only_files(
+        self, tool_name: str, env_set: Optional[str] = None
+    ) -> Set[str]:
+        """Get set of file patterns marked as init_only for a tool.
+
+        Args:
+            tool_name: Name of the tool
+            env_set: Environment set name
+
+        Returns:
+            Set of file pattern strings that have init_only: true
+
+        Related: Issue #6 - init_only delivery mode
+
+        """
+        tool_config, _ = self.get_tool_config(tool_name, env_set)
+        if not tool_config:
+            return set()
+
+        files = tool_config.get("files", [])
+        init_only_patterns: Set[str] = set()
+        for entry in files:
+            pattern, is_init_only = self._parse_file_entry(entry)
+            if is_init_only:
+                init_only_patterns.add(pattern)
+        return init_only_patterns
 
     def get_environment_sets(self) -> List[str]:
         """Get list of configured environment sets."""
@@ -137,7 +181,8 @@ class Config:
         files = tool_config.get("files", [])
 
         source_files = []
-        for file_pattern in files:
+        for entry in files:
+            file_pattern, _ = self._parse_file_entry(entry)
             # Handle glob patterns
             if "*" in file_pattern or "?" in file_pattern:
                 pattern_path = project_dir / file_pattern
@@ -204,7 +249,8 @@ class Config:
         files = tool_config.get("files", [])
 
         target_files = []
-        for file_pattern in files:
+        for entry in files:
+            file_pattern, _ = self._parse_file_entry(entry)
             # Handle glob patterns
             if "*" in file_pattern or "?" in file_pattern:
                 pattern_path = target_dir / file_pattern
@@ -238,7 +284,8 @@ class Config:
         files = tool_config.get("files", [])
 
         mapping = {}
-        for file_pattern in files:
+        for entry in files:
+            file_pattern, _ = self._parse_file_entry(entry)
             # For non-glob patterns, create direct mapping
             if "*" not in file_pattern and "?" not in file_pattern:
                 source = project_dir / file_pattern

@@ -3,7 +3,7 @@
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -26,7 +26,10 @@ class FileSyncer:
     """Handles file synchronization between central repo and projects."""
 
     def __init__(
-        self, config: Config, project_mapping: Optional[ProjectMapping] = None
+        self,
+        config: Config,
+        project_mapping: Optional[ProjectMapping] = None,
+        include_init_only: bool = False,
     ) -> None:
         """Initialize the file syncer.
 
@@ -34,10 +37,13 @@ class FileSyncer:
         ----
             config: Configuration instance
             project_mapping: Project mapping instance (optional)
+            include_init_only: If True, sync init_only files even when they
+                already exist at the target. Related: Issue #6
 
         """
         self.config = config
         self.project_mapping = project_mapping
+        self.include_init_only = include_init_only
         self.console = Console()
         self.diff_viewer = DiffViewer()
 
@@ -66,6 +72,12 @@ class FileSyncer:
         """
         # Get file mappings
         file_mapping = self.config.get_file_mapping(tool_name, target_dir, env_set)
+
+        # Filter out init_only files whose targets already exist (Issue #6)
+        if not self.include_init_only:
+            init_only_patterns = self.config.get_init_only_files(tool_name, env_set)
+            if init_only_patterns:
+                file_mapping = self._filter_init_only(file_mapping, init_only_patterns)
 
         if not file_mapping:
             self.console.print(
@@ -118,7 +130,8 @@ class FileSyncer:
 
         """
         # Get all file mappings across all tools
-        all_mappings = {}
+        all_mappings: Dict[Path, Path] = {}
+        all_init_only_patterns: Set[str] = set()
 
         if env_set:
             env_sets = [env_set]
@@ -132,6 +145,13 @@ class FileSyncer:
                     tool_name, target_dir, set_name
                 )
                 all_mappings.update(tool_mapping)
+                all_init_only_patterns |= self.config.get_init_only_files(
+                    tool_name, set_name
+                )
+
+        # Filter out init_only files whose targets already exist (Issue #6)
+        if not self.include_init_only and all_init_only_patterns:
+            all_mappings = self._filter_init_only(all_mappings, all_init_only_patterns)
 
         # Find the specific file
         matching_files = {}
@@ -228,6 +248,32 @@ class FileSyncer:
                 )
 
         return results
+
+    def _filter_init_only(
+        self,
+        file_mapping: Dict[Path, Path],
+        init_only_patterns: Set[str],
+    ) -> Dict[Path, Path]:
+        """Remove init_only entries from file_mapping when target already exists.
+
+        A file is considered init_only if any of the init_only_patterns is a
+        suffix of (or equals) its source path.  When the corresponding target
+        file already exists on disk, it is excluded from the returned mapping.
+
+        Related: Issue #6 - init_only delivery mode
+        """
+        filtered: Dict[Path, Path] = {}
+        for source, target in file_mapping.items():
+            source_str = str(source)
+            is_init_only = any(source_str.endswith(p) for p in init_only_patterns)
+            if is_init_only and target.exists():
+                self.console.print(
+                    f"[dim]Skipping init_only file (already exists): "
+                    f"{target.name}[/dim]"
+                )
+                continue
+            filtered[source] = target
+        return filtered
 
     def _find_differences(
         self, file_mapping: Dict[Path, Path]
