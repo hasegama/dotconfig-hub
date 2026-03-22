@@ -1,21 +1,23 @@
 """Tests for project mapping functionality."""
 
 import tempfile
+from collections.abc import Generator
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+
 from dotconfig_hub.project_mapping import ProjectMapping
 
 
-@pytest.fixture()
-def temp_templates_dir():
+@pytest.fixture
+def temp_templates_dir() -> Generator[Path]:
     """Create a temporary templates directory."""
     with tempfile.TemporaryDirectory() as temp_dir:
         yield Path(temp_dir)
 
 
-def test_project_mapping_initialization(temp_templates_dir):
+def test_project_mapping_initialization(temp_templates_dir: Path) -> None:
     """Test ProjectMapping initialization."""
     mapping = ProjectMapping(temp_templates_dir)
 
@@ -24,7 +26,7 @@ def test_project_mapping_initialization(temp_templates_dir):
     assert mapping.mapping_data == {"projects": {}}
 
 
-def test_add_and_get_project(temp_templates_dir):
+def test_add_and_get_project(temp_templates_dir: Path) -> None:
     """Test adding and retrieving projects."""
     mapping = ProjectMapping(temp_templates_dir)
 
@@ -45,7 +47,7 @@ def test_add_and_get_project(temp_templates_dir):
     assert info2 == info
 
 
-def test_remove_project(temp_templates_dir):
+def test_remove_project(temp_templates_dir: Path) -> None:
     """Test removing a project."""
     mapping = ProjectMapping(temp_templates_dir)
 
@@ -59,7 +61,7 @@ def test_remove_project(temp_templates_dir):
     assert mapping.get_project_info(project_path) is None
 
 
-def test_get_projects_by_environment_set(temp_templates_dir):
+def test_get_projects_by_environment_set(temp_templates_dir: Path) -> None:
     """Test getting projects by environment set."""
     mapping = ProjectMapping(temp_templates_dir)
 
@@ -86,7 +88,7 @@ def test_get_projects_by_environment_set(temp_templates_dir):
     assert len(projects) == 0
 
 
-def test_get_environment_set_usage(temp_templates_dir):
+def test_get_environment_set_usage(temp_templates_dir: Path) -> None:
     """Test getting environment set usage statistics."""
     mapping = ProjectMapping(temp_templates_dir)
 
@@ -102,7 +104,7 @@ def test_get_environment_set_usage(temp_templates_dir):
     assert usage["env_c"] == 1
 
 
-def test_update_last_synced(temp_templates_dir):
+def test_update_last_synced(temp_templates_dir: Path) -> None:
     """Test updating last_synced timestamp."""
     mapping = ProjectMapping(temp_templates_dir)
 
@@ -126,7 +128,7 @@ def test_update_last_synced(temp_templates_dir):
     assert timestamp2 > timestamp1
 
 
-def test_save_and_load_mapping(temp_templates_dir):
+def test_save_and_load_mapping(temp_templates_dir: Path) -> None:
     """Test saving and loading project mapping."""
     mapping1 = ProjectMapping(temp_templates_dir)
 
@@ -146,7 +148,7 @@ def test_save_and_load_mapping(temp_templates_dir):
     assert mapping2.get_project_info(Path("/project2")) is not None
 
 
-def test_cleanup_missing_projects(temp_templates_dir):
+def test_cleanup_missing_projects(temp_templates_dir: Path) -> None:
     """Test cleaning up projects that no longer exist."""
     mapping = ProjectMapping(temp_templates_dir)
 
@@ -166,7 +168,7 @@ def test_cleanup_missing_projects(temp_templates_dir):
     assert "/non/existing/path2" in str(removed)
 
 
-def test_find_projects_needing_sync(temp_templates_dir):
+def test_find_projects_needing_sync(temp_templates_dir: Path) -> None:
     """Test finding projects that need synchronization."""
     mapping = ProjectMapping(temp_templates_dir)
 
@@ -194,7 +196,7 @@ def test_find_projects_needing_sync(temp_templates_dir):
     assert "/recent-project" not in paths
 
 
-def test_path_normalization_with_home_directory(temp_templates_dir):
+def test_path_normalization_with_home_directory(temp_templates_dir: Path) -> None:
     """Test that paths are normalized correctly with home directory."""
     mapping = ProjectMapping(temp_templates_dir)
 

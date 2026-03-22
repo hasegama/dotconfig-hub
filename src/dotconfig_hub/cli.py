@@ -809,7 +809,6 @@ def compare(
         console.print("\n[yellow]Compare cancelled by user[/yellow]")
 
 
-
 def _display_results(results: dict, dry_run: bool) -> None:
     """Display sync results in a table.
 
