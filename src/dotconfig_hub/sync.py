@@ -339,16 +339,17 @@ class FileSyncer:
 
         # Perform sync
         if not dry_run:
-            self._perform_sync(source, target, direction)
-            self.console.print(f"[green]✓ Synced {target.name}[/green]")
+            synced = self._perform_sync(source, target, direction)
+            if synced:
+                self.console.print(f"[green]✓ Synced {target.name}[/green]")
+            return synced
         else:
             action = "Would sync (dry run)"
             if direction == SyncDirection.TO_LOCAL:
                 self.console.print(f"[cyan]{action}: Hub → Project[/cyan]")
             else:
                 self.console.print(f"[cyan]{action}: Project → Hub[/cyan]")
-
-        return True
+            return True
 
     def _prompt_sync_direction(self, source: Path, target: Path) -> str:
         """Prompt user for sync direction.
@@ -396,7 +397,7 @@ class FileSyncer:
 
             return action
 
-    def _perform_sync(self, source: Path, target: Path, direction: str) -> None:
+    def _perform_sync(self, source: Path, target: Path, direction: str) -> bool:
         """Perform the actual file sync.
 
         Args:
@@ -405,15 +406,23 @@ class FileSyncer:
             target: Target file path
             direction: Sync direction
 
+        Returns:
+        -------
+            True if file was synced, False if skipped
+
         """
         if direction == SyncDirection.TO_LOCAL:
             # Hub → Project
-            self._copy_file(source, target, create_backup=True)
+            return self._copy_file(source, target, create_backup=True)
         elif direction == SyncDirection.TO_REMOTE:
             # Project → Hub
-            self._copy_file(target, source, create_backup=True)
+            return self._copy_file(target, source, create_backup=True)
+        self.console.print(
+            f"[yellow]⚠ Skipped: unknown sync direction '{direction}'[/yellow]"
+        )
+        return False
 
-    def _copy_file(self, src: Path, dst: Path, create_backup: bool = True) -> None:
+    def _copy_file(self, src: Path, dst: Path, create_backup: bool = True) -> bool:
         """Copy file with optional backup.
 
         Args:
@@ -422,7 +431,18 @@ class FileSyncer:
             dst: Destination file
             create_backup: If True, create backup of destination
 
+        Returns:
+        -------
+            True if file was copied, False if skipped
+
         """
+        # Skip if source file does not exist
+        if not src.exists():
+            self.console.print(
+                f"[yellow]⚠ Skipped: source file does not exist: {src}[/yellow]"
+            )
+            return False
+
         # Create backup if destination exists
         if create_backup and dst.exists():
             backup_path = dst.with_suffix(dst.suffix + ".bak")
@@ -438,3 +458,4 @@ class FileSyncer:
 
         # Copy file
         shutil.copy2(src, dst)
+        return True
