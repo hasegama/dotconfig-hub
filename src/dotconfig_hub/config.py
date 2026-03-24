@@ -290,8 +290,9 @@ class Config:
             if "*" not in file_pattern and "?" not in file_pattern:
                 source = project_dir / file_pattern
                 target = target_dir / file_pattern
-                # Include in mapping if file exists in either location
-                if source.exists() or target.exists():
+                # Include in mapping only if at least one side is a file
+                # (skip directories to avoid IsADirectoryError during sync)
+                if source.is_file() or target.is_file():
                     mapping[source] = target
             else:
                 # For glob patterns, match files from both source and target
@@ -302,9 +303,11 @@ class Config:
                 source_files = glob.glob(str(source_pattern), recursive=True)
                 target_files = glob.glob(str(target_pattern), recursive=True)
 
-                # Process source files
+                # Process source files (skip directories)
                 for source_file in source_files:
                     source_path = Path(source_file)
+                    if not source_path.is_file():
+                        continue
                     try:
                         relative_path = source_path.relative_to(project_dir)
                         target_path = target_dir / relative_path
@@ -313,8 +316,11 @@ class Config:
                         continue
 
                 # Process target files that don't have corresponding source files
+                # (skip directories)
                 for target_file in target_files:
                     target_path = Path(target_file)
+                    if not target_path.is_file():
+                        continue
                     try:
                         relative_path = target_path.relative_to(target_dir)
                         source_path = project_dir / relative_path

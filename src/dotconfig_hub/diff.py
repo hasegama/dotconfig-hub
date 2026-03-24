@@ -28,6 +28,12 @@ class DiffViewer:
             True if files are different, False if identical
 
         """
+        # Skip directories — only files can be compared
+        if (source_path.exists() and source_path.is_dir()) or (
+            target_path.exists() and target_path.is_dir()
+        ):
+            return False
+
         # If target doesn't exist, they're different
         if not target_path.exists():
             return True
@@ -58,6 +64,12 @@ class DiffViewer:
         """
         source_lines = []
         target_lines = []
+
+        # Skip directories — only files can produce diffs
+        if (source_path.exists() and source_path.is_dir()) or (
+            target_path.exists() and target_path.is_dir()
+        ):
+            return []
 
         if source_path.exists():
             with open(source_path, "r", encoding="utf-8") as f:
