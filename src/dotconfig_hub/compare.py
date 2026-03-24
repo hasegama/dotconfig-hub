@@ -358,20 +358,27 @@ class EnvSetComparer:
 
         Finds the first tool in the target set whose files could contain the
         given relative path and constructs the absolute path from its project_dir.
+        For rename entries, reverse-maps the project-side name (target) back to
+        the hub-side name (source).
 
         Args:
-            relative_path: Relative file path to resolve
+            relative_path: Relative file path to resolve (project-side name)
             target_set: Environment set to resolve the path in
 
         Returns:
             Absolute path in the target set's project_dir
+
+        Related: Issue #10 - file rename rules (reverse lookup)
 
         """
         for tool_name in self.config.get_tools(target_set):
             tool_config, _ = self.config.get_tool_config(tool_name, target_set)
             if tool_config:
                 project_dir = self.config.base_dir / tool_config.get("project_dir", "")
-                return project_dir / relative_path
+                # Check if relative_path is a rename target and reverse-map
+                # to the hub-side source name
+                hub_relative = self._reverse_rename_lookup(relative_path, tool_config)
+                return project_dir / hub_relative
 
         # Fallback: should not normally reach here
         msg = (
@@ -379,6 +386,30 @@ class EnvSetComparer:
             f"in environment set '{target_set}'"
         )
         raise ValueError(msg)
+
+    @staticmethod
+    def _reverse_rename_lookup(relative_path: str, tool_config: dict) -> str:
+        """Reverse-map a project-side target name to the hub-side source name.
+
+        If relative_path matches a rename entry's target, returns the source.
+        Otherwise returns relative_path unchanged.
+
+        Args:
+            relative_path: Project-side relative path (may be a rename target)
+            tool_config: Tool configuration dict containing file entries
+
+        Returns:
+            Hub-side relative path (source name)
+
+        Related: Issue #10 - file rename rules
+
+        """
+        for entry in tool_config.get("files", []):
+            if isinstance(entry, dict) and "source" in entry:
+                target = entry.get("target")
+                if target and target == relative_path:
+                    return entry["source"]
+        return relative_path
 
     def _display_summary(
         self,

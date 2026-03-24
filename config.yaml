@@ -3,9 +3,13 @@
 # File entry formats:
 #   - string: "path/to/file"  (always synced)
 #   - dict:   { path: "file", init_only: true }  (synced only on first setup)
+#   - dict:   { source: "hub_name", target: "project_name" }  (rename on delivery)
+#   - dict:   { source: "hub_name", target: "project_name", init_only: true }
 #
 # Use init_only for files that each project will customize after initial delivery.
-# Glob patterns (*.md, **/*.yml) are supported in string entries.
+# Use source/target rename when the hub filename must differ from the project filename
+# (e.g. .gitignore cannot be stored as-is in the hub because Git interprets it).
+# Glob patterns (*.md, **/*.yml) are supported in string entries but NOT with rename.
 
 environment_sets:
   # Complete project template
@@ -46,8 +50,9 @@ environment_sets:
       git_config:
         project_dir: my_project_init_template
         files:
-          # .gitignore is delivered once — each project adds its own entries
-          - { path: .gitignore, init_only: true }
+          # .gitignore is stored as .gitignore.hub in the hub to prevent Git
+          # from interpreting it. Renamed to .gitignore on delivery to projects.
+          - { source: .gitignore.hub, target: .gitignore, init_only: true }
 
   # Minimal project template for lightweight projects
   minimal_template:
