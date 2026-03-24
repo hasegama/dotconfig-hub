@@ -2,9 +2,24 @@
 
 import glob
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 
 import yaml
+
+
+class FileEntry(NamedTuple):
+    """Parsed file entry from config.yaml.
+
+    Attributes:
+        source: Hub-side path (e.g. ".gitignore.hub")
+        is_init_only: If True, file is only synced on first setup (Issue #6)
+        target: Project-side path when renaming (None = same as source, Issue #10)
+
+    """
+
+    source: str
+    is_init_only: bool
+    target: Optional[str] = None
 
 
 class Config:
@@ -60,19 +75,43 @@ class Config:
             del self.config_data["tools"]
 
     @staticmethod
-    def _parse_file_entry(entry: Union[str, Dict[str, Any]]) -> Tuple[str, bool]:
-        """Parse a file entry from the YAML config into (pattern, init_only).
+    def _parse_file_entry(entry: Union[str, Dict[str, Any]]) -> FileEntry:
+        """Parse a file entry from the YAML config into a FileEntry.
 
-        Supports two formats:
-          - string: "path/to/file" -> (pattern, False)
-          - dict:   {path: "path/to/file", init_only: true} -> (pattern, True)
+        Supports three formats:
+          - string: "path/to/file"
+              -> FileEntry(source="path/to/file", is_init_only=False, target=None)
+          - dict:   {path: "file", init_only: true}
+              -> FileEntry(source="file", is_init_only=True, target=None)
+          - dict:   {source: ".gitignore.hub", target: ".gitignore", init_only: true}
+              -> FileEntry(source=".gitignore.hub", is_init_only=True, target=".gitignore")
 
-        Related: Issue #6 - init_only delivery mode
+        Glob patterns combined with rename (target) are not supported.
+
+        Related: Issue #6 - init_only delivery mode, Issue #10 - file rename rules
         """
         if isinstance(entry, str):
-            return entry, False
+            return FileEntry(source=entry, is_init_only=False)
         if isinstance(entry, dict):
-            return entry["path"], entry.get("init_only", False)
+            # New rename format: {source: ..., target: ...}
+            if "source" in entry:
+                source = entry["source"]
+                target = entry.get("target")
+                is_init_only = entry.get("init_only", False)
+                # Glob patterns with rename are not allowed
+                if target and ("*" in source or "?" in source):
+                    msg = (
+                        f"Glob patterns cannot be combined with rename: "
+                        f"source='{source}', target='{target}'"
+                    )
+                    raise ValueError(msg)
+                return FileEntry(
+                    source=source, is_init_only=is_init_only, target=target
+                )
+            # Legacy format: {path: ..., init_only: ...}
+            return FileEntry(
+                source=entry["path"], is_init_only=entry.get("init_only", False)
+            )
         msg = f"Unexpected file entry type: {type(entry)}"
         raise TypeError(msg)
 
@@ -98,9 +137,9 @@ class Config:
         files = tool_config.get("files", [])
         init_only_patterns: Set[str] = set()
         for entry in files:
-            pattern, is_init_only = self._parse_file_entry(entry)
-            if is_init_only:
-                init_only_patterns.add(pattern)
+            file_entry = self._parse_file_entry(entry)
+            if file_entry.is_init_only:
+                init_only_patterns.add(file_entry.source)
         return init_only_patterns
 
     def get_environment_sets(self) -> List[str]:
@@ -182,14 +221,14 @@ class Config:
 
         source_files = []
         for entry in files:
-            file_pattern, _ = self._parse_file_entry(entry)
-            # Handle glob patterns
-            if "*" in file_pattern or "?" in file_pattern:
-                pattern_path = project_dir / file_pattern
+            file_entry = self._parse_file_entry(entry)
+            # Handle glob patterns (rename not allowed with globs)
+            if "*" in file_entry.source or "?" in file_entry.source:
+                pattern_path = project_dir / file_entry.source
                 matched_files = glob.glob(str(pattern_path), recursive=True)
                 source_files.extend(Path(f) for f in matched_files)
             else:
-                file_path = project_dir / file_pattern
+                file_path = project_dir / file_entry.source
                 if file_path.exists():
                     source_files.append(file_path)
 
@@ -216,13 +255,25 @@ class Config:
             return {}
 
         project_dir = self.base_dir / tool_config.get("project_dir", "")
+        files = tool_config.get("files", [])
+
+        # Build rename map: hub source path -> project-side relative key
+        # For rename entries, the key should be the target (project-side) name
+        rename_map: Dict[str, str] = {}
+        for entry in files:
+            file_entry = self._parse_file_entry(entry)
+            if file_entry.target:
+                rename_map[file_entry.source] = file_entry.target
+
         source_files = self.get_source_files(tool_name, env_set)
 
         relative_map: Dict[str, Path] = {}
         for abs_path in source_files:
             try:
                 rel_path = abs_path.relative_to(project_dir)
-                relative_map[str(rel_path)] = abs_path
+                # Use target name as key if this is a rename entry
+                key = rename_map.get(str(rel_path), str(rel_path))
+                relative_map[key] = abs_path
             except ValueError:
                 continue
 
@@ -250,14 +301,16 @@ class Config:
 
         target_files = []
         for entry in files:
-            file_pattern, _ = self._parse_file_entry(entry)
-            # Handle glob patterns
-            if "*" in file_pattern or "?" in file_pattern:
-                pattern_path = target_dir / file_pattern
+            file_entry = self._parse_file_entry(entry)
+            # Use target name (project-side) if rename is configured
+            target_name = file_entry.target or file_entry.source
+            # Handle glob patterns (rename not allowed with globs)
+            if "*" in file_entry.source or "?" in file_entry.source:
+                pattern_path = target_dir / file_entry.source
                 matched_files = glob.glob(str(pattern_path), recursive=True)
                 target_files.extend(Path(f) for f in matched_files)
             else:
-                file_path = target_dir / file_pattern
+                file_path = target_dir / target_name
                 target_files.append(file_path)  # Include even if doesn't exist
 
         return target_files
@@ -285,19 +338,22 @@ class Config:
 
         mapping = {}
         for entry in files:
-            file_pattern, _ = self._parse_file_entry(entry)
+            file_entry = self._parse_file_entry(entry)
+            # Use target name (project-side) if rename is configured
+            target_name = file_entry.target or file_entry.source
             # For non-glob patterns, create direct mapping
-            if "*" not in file_pattern and "?" not in file_pattern:
-                source = project_dir / file_pattern
-                target = target_dir / file_pattern
+            if "*" not in file_entry.source and "?" not in file_entry.source:
+                source = project_dir / file_entry.source
+                target = target_dir / target_name
                 # Include in mapping only if at least one side is a file
                 # (skip directories to avoid IsADirectoryError during sync)
                 if source.is_file() or target.is_file():
                     mapping[source] = target
             else:
                 # For glob patterns, match files from both source and target
-                source_pattern = project_dir / file_pattern
-                target_pattern = target_dir / file_pattern
+                # (rename not allowed with globs, so source == target name)
+                source_pattern = project_dir / file_entry.source
+                target_pattern = target_dir / file_entry.source
 
                 # Get files from both sides
                 source_files = glob.glob(str(source_pattern), recursive=True)
