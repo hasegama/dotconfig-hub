@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import List, Optional
 
 from rich.console import Console
+from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.syntax import Syntax
 from rich.table import Table
 
 from .config import Config
@@ -246,12 +248,8 @@ class EnvSetComparer:
         self.console.print(f"  [yellow]{set_b}[/yellow]: {pair.path_b}")
 
         if pair.path_a and pair.path_b:
-            # Reuse DiffViewer's unified diff display
             diff_lines = self.diff_viewer.get_diff_lines(pair.path_a, pair.path_b)
             if diff_lines:
-                from rich.panel import Panel
-                from rich.syntax import Syntax
-
                 diff_text = "\n".join(diff_lines)
                 syntax = Syntax(diff_text, "diff", theme="monokai", line_numbers=True)
                 self.console.print(

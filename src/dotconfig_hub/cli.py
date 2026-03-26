@@ -52,6 +52,54 @@ def _load_templates_config(config_file: Path) -> Optional[dict]:
         return None
 
 
+def _prompt_for_directory(cancel_message: str = "cancelled") -> Optional[Path]:
+    """Interactively prompt the user for a valid directory path.
+
+    Loops until the user enters an existing directory or declines to retry.
+    Handles quoted paths and tilde expansion.
+
+    Args:
+        cancel_message: Message fragment shown when the user cancels.
+
+    Returns:
+        Resolved Path to a valid directory, or None if the user cancelled.
+
+    """
+    while True:
+        templates_input = Prompt.ask("Templates directory path")
+        if not templates_input.strip():
+            console.print("[red]Please enter a valid path[/red]")
+            continue
+
+        path = Path(templates_input.strip("\"'").strip()).expanduser().resolve()
+        if path.exists() and path.is_dir():
+            return path
+
+        console.print(f"[red]Directory not found: {path}[/red]")
+        if not Confirm.ask("Try again?", default=True):
+            console.print(f"[yellow]{cancel_message}[/yellow]")
+            return None
+
+
+def _validate_env_sets(env_sets: list, available: list) -> Optional[list]:
+    """Validate environment set names against available sets.
+
+    Args:
+        env_sets: List of environment set names to validate.
+        available: List of valid environment set names.
+
+    Returns:
+        The validated list on success, or None if invalid names were found.
+
+    """
+    invalid = [s for s in env_sets if s not in available]
+    if invalid:
+        console.print(f"[red]Invalid environment sets: {', '.join(invalid)}[/red]")
+        console.print(f"[yellow]Available sets: {', '.join(available)}[/yellow]")
+        return None
+    return env_sets
+
+
 @click.group()
 @click.version_option()
 def main() -> None:
@@ -84,12 +132,9 @@ def setup(templates_dir: Path) -> None:
     """
     console.print("\n[bold blue]dotconfig-hub Setup[/bold blue]")
 
-    # Initialize project config to check for global defaults
     project_config = ProjectConfig()
 
-    # Prompt for templates directory if not provided
     if not templates_dir:
-        # Check for global configuration defaults
         global_templates_source = project_config.get_global_templates_source()
         global_env_sets = project_config.get_global_environment_sets()
 
@@ -102,34 +147,18 @@ def setup(templates_dir: Path) -> None:
                     f"[cyan]Default environment sets: {', '.join(global_env_sets)}[/cyan]"
                 )
 
-            # Ask if user wants to use global defaults
             use_defaults = Confirm.ask("Use these defaults?", default=True)
             if use_defaults:
                 templates_dir = global_templates_source
             else:
                 console.print("Please enter a different templates directory path.")
 
-        # If no global defaults or user chose not to use them
         if not templates_dir:
             console.print("Please enter the path to your templates directory.")
             console.print("[dim]Example: ~/dotconfig-templates[/dim]")
-
-            while True:
-                templates_input = Prompt.ask("Templates directory path")
-                if not templates_input.strip():
-                    console.print("[red]Please enter a valid path[/red]")
-                    continue
-
-                templates_dir = (
-                    Path(templates_input.strip("\"'").strip()).expanduser().resolve()
-                )
-                if templates_dir.exists() and templates_dir.is_dir():
-                    break
-                else:
-                    console.print(f"[red]Directory not found: {templates_dir}[/red]")
-                    if not Confirm.ask("Try again?", default=True):
-                        console.print("[yellow]Setup cancelled[/yellow]")
-                        return
+            templates_dir = _prompt_for_directory(cancel_message="Setup cancelled")
+            if templates_dir is None:
+                return
 
     # Validate templates directory and load config
     templates_dir = templates_dir.resolve()
@@ -142,7 +171,6 @@ def setup(templates_dir: Path) -> None:
         f"[green]Found {len(env_sets)} environment sets: {', '.join(env_sets)}[/green]"
     )
 
-    # Check if already configured
     if project_config.exists():
         current_source = project_config.get_templates_source()
         if current_source and current_source != templates_dir:
@@ -152,7 +180,6 @@ def setup(templates_dir: Path) -> None:
                 console.print("[yellow]Setup cancelled[/yellow]")
                 return
 
-    # Save configuration
     project_config.set_templates_source(templates_dir)
     project_config.save_config()
 
@@ -191,7 +218,6 @@ def global_config(templates_dir: Path, env_sets: str) -> None:
 
     project_config = ProjectConfig()
 
-    # Handle templates directory
     if not templates_dir:
         current_global = project_config.get_global_templates_source()
         if current_global:
@@ -206,23 +232,11 @@ def global_config(templates_dir: Path, env_sets: str) -> None:
             console.print(
                 "[dim]This will be suggested when running 'dotconfig-hub setup'[/dim]"
             )
-
-            while True:
-                templates_input = Prompt.ask("Templates directory path")
-                if not templates_input.strip():
-                    console.print("[red]Please enter a valid path[/red]")
-                    continue
-
-                templates_dir = (
-                    Path(templates_input.strip("\"'").strip()).expanduser().resolve()
-                )
-                if templates_dir.exists() and templates_dir.is_dir():
-                    break
-                else:
-                    console.print(f"[red]Directory not found: {templates_dir}[/red]")
-                    if not Confirm.ask("Try again?", default=True):
-                        console.print("[yellow]Global config cancelled[/yellow]")
-                        return
+            templates_dir = _prompt_for_directory(
+                cancel_message="Global config cancelled"
+            )
+            if templates_dir is None:
+                return
 
     # Validate templates directory and load config
     templates_dir = templates_dir.resolve()
@@ -235,19 +249,10 @@ def global_config(templates_dir: Path, env_sets: str) -> None:
         f"[green]Available environment sets: {', '.join(available_env_sets)}[/green]"
     )
 
-    # Handle environment sets
     environment_sets = []
     if env_sets:
         environment_sets = [s.strip() for s in env_sets.split(",") if s.strip()]
-        # Validate environment sets
-        invalid_sets = [s for s in environment_sets if s not in available_env_sets]
-        if invalid_sets:
-            console.print(
-                f"[red]Invalid environment sets: {', '.join(invalid_sets)}[/red]"
-            )
-            console.print(
-                f"[yellow]Available sets: {', '.join(available_env_sets)}[/yellow]"
-            )
+        if _validate_env_sets(environment_sets, available_env_sets) is None:
             return
     else:
         current_global_env_sets = project_config.get_global_environment_sets()
@@ -267,16 +272,9 @@ def global_config(templates_dir: Path, env_sets: str) -> None:
                 environment_sets = [
                     s.strip() for s in env_input.split(",") if s.strip()
                 ]
-                invalid_sets = [
-                    s for s in environment_sets if s not in available_env_sets
-                ]
-                if invalid_sets:
-                    console.print(
-                        f"[red]Invalid environment sets: {', '.join(invalid_sets)}[/red]"
-                    )
+                if _validate_env_sets(environment_sets, available_env_sets) is None:
                     return
 
-    # Save global configuration
     project_config.save_global_config(templates_dir, environment_sets)
 
     console.print(f"[green]✓ Global templates source: {templates_dir}[/green]")
@@ -314,10 +312,8 @@ def init(env_set: str, force: bool) -> None:
     """
     console.print("\n[bold blue]dotconfig-hub Project Initialization[/bold blue]")
 
-    # Load project config
     project_config = ProjectConfig()
 
-    # Validate setup
     issues = project_config.validate_setup()
     if issues:
         console.print("[red]Setup issues found:[/red]")
@@ -326,14 +322,12 @@ def init(env_set: str, force: bool) -> None:
         console.print("\n[yellow]Run 'dotconfig-hub setup' first[/yellow]")
         return
 
-    # Get available environment sets
     templates_config_path = project_config.get_templates_config_path()
     with open(templates_config_path, "r", encoding="utf-8") as f:
         templates_config = yaml.safe_load(f)
 
     available_sets = [*templates_config["environment_sets"]]
 
-    # Prompt for environment set if not provided
     if not env_set:
         console.print("Available environment sets:")
         for i, set_name in enumerate(available_sets, 1):
@@ -349,37 +343,31 @@ def init(env_set: str, force: bool) -> None:
                 show_choices=False,
             )
 
-            # Handle numeric choice
             if choice.isdigit():
                 idx = int(choice) - 1
                 if 0 <= idx < len(available_sets):
                     env_set = available_sets[idx]
                     break
-            # Handle name choice
             elif choice in available_sets:
                 env_set = choice
                 break
 
             console.print("[red]Invalid choice[/red]")
 
-    # Validate environment set
     if env_set not in available_sets:
         console.print(f"[red]Unknown environment set: {env_set}[/red]")
         console.print(f"[yellow]Available sets: {', '.join(available_sets)}[/yellow]")
         return
 
-    # Check if already configured
     current_sets = project_config.get_active_environment_sets()
     if env_set in current_sets and not force:
         console.print(f"[yellow]Environment set '{env_set}' is already active[/yellow]")
         console.print("Use --force to reconfigure")
         return
 
-    # Add environment set
     project_config.add_environment_set(env_set)
     project_config.save_config()
 
-    # Update project mapping
     templates_source = project_config.get_templates_source()
     project_mapping = ProjectMapping(templates_source)
     project_mapping.add_project(
@@ -456,22 +444,13 @@ def sync(
         )
         return
 
-    # Load templates config
     templates_config_path = project_config.get_templates_config_path()
-
-    # Initialize config with templates source
     cfg = Config(config_path=templates_config_path)
-
-    # Set target directory
     target_directory = Path.cwd()
-
-    # Initialize project mapping
     project_mapping = ProjectMapping(project_config.get_templates_source())
-
-    # Initialize syncer with project mapping (include_init_only: Issue #6)
+    # include_init_only: Issue #6 — re-deliver init_only files when explicitly requested
     syncer = FileSyncer(cfg, project_mapping, include_init_only=include_init_only)
 
-    # Get active environment sets
     active_env_sets = project_config.get_active_environment_sets()
     if env_set:
         if env_set not in active_env_sets:
@@ -488,7 +467,6 @@ def sync(
         )
         return
 
-    # Perform sync
     if dry_run:
         console.print("[yellow]DRY RUN MODE - No files will be modified[/yellow]\n")
 
@@ -496,14 +474,12 @@ def sync(
         all_results = {}
 
         if file:
-            # Sync specific file
             console.print(f"[bold]Syncing specific file: {file}[/bold]")
             synced = syncer.sync_file(
                 file, target_directory, auto_sync, dry_run, env_set
             )
             all_results[f"file/{file}"] = synced
         else:
-            # Sync by tool or all tools
             for env_set_name in active_env_sets:
                 console.print(
                     f"\n[bold magenta]Environment Set: {env_set_name}[/bold magenta]"
@@ -557,17 +533,14 @@ def list() -> None:
     """
     console.print("\n[bold blue]dotconfig-hub Configuration[/bold blue]")
 
-    # Load project config
     project_config = ProjectConfig()
 
-    # Check if configured
     if not project_config.exists():
         console.print(
             "[yellow]Project not configured. Run 'dotconfig-hub setup' first.[/yellow]"
         )
         return
 
-    # Display templates source
     templates_source = project_config.get_templates_source()
     if templates_source:
         console.print(f"[bold]Templates Source:[/bold] {templates_source}")
@@ -575,7 +548,6 @@ def list() -> None:
         console.print("[red]Templates source not configured[/red]")
         return
 
-    # Validate setup
     issues = project_config.validate_setup()
     if issues:
         console.print("\n[red]Setup issues:[/red]")
@@ -583,12 +555,10 @@ def list() -> None:
             console.print(f"  • {issue}")
         return
 
-    # Load templates config
     templates_config_path = project_config.get_templates_config_path()
     with open(templates_config_path, "r", encoding="utf-8") as f:
         templates_config = yaml.safe_load(f)
 
-    # Display available environment sets
     console.print("\n[bold]Available Environment Sets:[/bold]")
     active_sets = set(project_config.get_active_environment_sets())
 
@@ -624,10 +594,7 @@ def projects(env_set: str, cleanup: bool) -> None:
     """
     console.print("\n[bold blue]dotconfig-hub Tracked Projects[/bold blue]")
 
-    # Load project config
     project_config = ProjectConfig()
-
-    # Validate setup
     issues = project_config.validate_setup()
     if issues:
         console.print("[red]Setup issues found:[/red]")
@@ -635,7 +602,6 @@ def projects(env_set: str, cleanup: bool) -> None:
             console.print(f"  • {issue}")
         return
 
-    # Load project mapping
     templates_source = project_config.get_templates_source()
     if not templates_source:
         console.print("[red]Templates source not configured[/red]")
@@ -643,7 +609,6 @@ def projects(env_set: str, cleanup: bool) -> None:
 
     project_mapping = ProjectMapping(templates_source)
 
-    # Cleanup if requested
     if cleanup:
         removed = project_mapping.cleanup_missing_projects()
         if removed:
@@ -655,7 +620,6 @@ def projects(env_set: str, cleanup: bool) -> None:
             console.print("[green]No missing projects found[/green]")
         return
 
-    # Get projects
     if env_set:
         projects = project_mapping.get_projects_by_environment_set(env_set)
         if not projects:
@@ -766,10 +730,9 @@ def compare(
     """
     console.print("\n[bold blue]dotconfig-hub Compare[/bold blue]")
 
-    # Load hub config directly (no project setup required)
+    # Config loaded directly from hub — no project setup required
     cfg = Config()
 
-    # Validate environment sets exist
     available_sets = cfg.get_environment_sets()
     for name in (set_a, set_b):
         if name not in available_sets:

@@ -17,6 +17,19 @@ class DiffViewer:
         """Initialize the diff viewer."""
         self.console = Console()
 
+    @staticmethod
+    def _is_directory(path: Path) -> bool:
+        """Return True if path exists and is a directory."""
+        return path.exists() and path.is_dir()
+
+    @staticmethod
+    def _read_file_lines(path: Path) -> List[str]:
+        """Read file as list of lines, returning [] if the file doesn't exist."""
+        if not path.exists():
+            return []
+        with open(path, "r", encoding="utf-8") as f:
+            return f.readlines()
+
     def compare_files(self, source_path: Path, target_path: Path) -> bool:
         """Compare two files and return True if they are different.
 
@@ -28,24 +41,13 @@ class DiffViewer:
             True if files are different, False if identical
 
         """
-        # Skip directories — only files can be compared
-        if (source_path.exists() and source_path.is_dir()) or (
-            target_path.exists() and target_path.is_dir()
-        ):
+        if self._is_directory(source_path) or self._is_directory(target_path):
             return False
-
-        # If target doesn't exist, they're different
-        if not target_path.exists():
+        if not target_path.exists() or not source_path.exists():
             return True
 
-        # If source doesn't exist (shouldn't happen), they're different
-        if not source_path.exists():
-            return True
-
-        # Compare file contents
         with open(source_path, "r", encoding="utf-8") as f:
             source_content = f.read()
-
         with open(target_path, "r", encoding="utf-8") as f:
             target_content = f.read()
 
@@ -62,32 +64,21 @@ class DiffViewer:
             List of diff lines
 
         """
-        source_lines = []
-        target_lines = []
-
-        # Skip directories — only files can produce diffs
-        if (source_path.exists() and source_path.is_dir()) or (
-            target_path.exists() and target_path.is_dir()
-        ):
+        if self._is_directory(source_path) or self._is_directory(target_path):
             return []
 
-        if source_path.exists():
-            with open(source_path, "r", encoding="utf-8") as f:
-                source_lines = f.readlines()
+        source_lines = self._read_file_lines(source_path)
+        target_lines = self._read_file_lines(target_path)
 
-        if target_path.exists():
-            with open(target_path, "r", encoding="utf-8") as f:
-                target_lines = f.readlines()
-
-        diff = difflib.unified_diff(
-            target_lines,
-            source_lines,
-            fromfile=f"Project: {target_path}",
-            tofile=f"Hub: {source_path}",
-            lineterm="",
+        return list(
+            difflib.unified_diff(
+                target_lines,
+                source_lines,
+                fromfile=f"Project: {target_path}",
+                tofile=f"Hub: {source_path}",
+                lineterm="",
+            )
         )
-
-        return list(diff)
 
     def display_diff(
         self,
@@ -143,16 +134,8 @@ class DiffViewer:
 
     def _display_context_diff(self, source_path: Path, target_path: Path) -> None:
         """Display context diff showing only changed lines with minimal context."""
-        source_lines = []
-        target_lines = []
-
-        if source_path.exists():
-            with open(source_path, "r", encoding="utf-8") as f:
-                source_lines = f.readlines()
-
-        if target_path.exists():
-            with open(target_path, "r", encoding="utf-8") as f:
-                target_lines = f.readlines()
+        source_lines = self._read_file_lines(source_path)
+        target_lines = self._read_file_lines(target_path)
 
         # Get context diff with minimal context (1 line)
         diff = difflib.context_diff(
@@ -207,6 +190,14 @@ class DiffViewer:
         else:
             self.console.print("\n[green]No significant changes to display[/green]")
 
+    @staticmethod
+    def _get_lexer(file_path: Path) -> str:
+        """Determine Pygments lexer name from file extension."""
+        ext = file_path.suffix.lstrip(".")
+        return {"yml": "yaml", "yaml": "yaml", "md": "markdown", "py": "python"}.get(
+            ext, "text"
+        )
+
     def _display_side_by_side(self, source_path: Path, target_path: Path) -> None:
         """Display files side by side."""
         with open(source_path, "r", encoding="utf-8") as f:
@@ -215,16 +206,7 @@ class DiffViewer:
         with open(target_path, "r", encoding="utf-8") as f:
             target_content = f.read()
 
-        # Determine file extension for syntax highlighting
-        file_ext = source_path.suffix.lstrip(".")
-        if file_ext in ["yml", "yaml"]:
-            lexer = "yaml"
-        elif file_ext == "md":
-            lexer = "markdown"
-        elif file_ext == "py":
-            lexer = "python"
-        else:
-            lexer = "text"
+        lexer = self._get_lexer(source_path)
 
         # Create syntax highlighted panels
         source_syntax = Syntax(
@@ -247,17 +229,7 @@ class DiffViewer:
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # Determine file extension for syntax highlighting
-        file_ext = file_path.suffix.lstrip(".")
-        if file_ext in ["yml", "yaml"]:
-            lexer = "yaml"
-        elif file_ext == "md":
-            lexer = "markdown"
-        elif file_ext == "py":
-            lexer = "python"
-        else:
-            lexer = "text"
-
+        lexer = self._get_lexer(file_path)
         syntax = Syntax(content, lexer, theme="monokai", line_numbers=True)
         panel = Panel(syntax, title=title, border_style="blue")
 

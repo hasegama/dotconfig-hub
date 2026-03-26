@@ -70,10 +70,9 @@ class FileSyncer:
             Number of files synced
 
         """
-        # Get file mappings
         file_mapping = self.config.get_file_mapping(tool_name, target_dir, env_set)
 
-        # Filter out init_only files whose targets already exist (Issue #6)
+        # Skip init_only files whose targets already exist (Issue #6)
         if not self.include_init_only:
             init_only_patterns = self.config.get_init_only_files(tool_name, env_set)
             if init_only_patterns:
@@ -87,17 +86,14 @@ class FileSyncer:
                 self.console.print(f"[dim]Environment set: {env_set}[/dim]")
             return 0
 
-        # Find differences
         differences = self._find_differences(file_mapping)
 
         if not differences:
             self.console.print(f"[green]All files for {tool_name} are in sync[/green]")
             return 0
 
-        # Display summary
         self.diff_viewer.display_summary(differences)
 
-        # Sync files
         synced_count = 0
         for source, target, has_diff in differences:
             if has_diff:
@@ -323,11 +319,9 @@ class FileSyncer:
             True if file was synced, False if skipped
 
         """
-        # Display diff
         self.console.print(f"\n[bold]File: {target.name}[/bold]")
         self.diff_viewer.display_diff(source, target)
 
-        # Determine sync direction
         if auto_sync:
             direction = auto_sync
         else:
@@ -337,7 +331,6 @@ class FileSyncer:
             self.console.print("[yellow]Skipping file[/yellow]")
             return False
 
-        # Perform sync
         if not dry_run:
             synced = self._perform_sync(source, target, direction)
             if synced:

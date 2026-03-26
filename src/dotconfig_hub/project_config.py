@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from .utils import to_home_relative_str
+
 
 class ProjectConfig:
     """Manages project-specific configuration in dotconfig-hub.yaml."""
@@ -89,13 +91,7 @@ class ProjectConfig:
     @staticmethod
     def _to_home_relative_str(path: Path) -> str:
         """Convert path to home-relative string if possible (e.g. ~/projects/foo)."""
-        try:
-            home = Path.home()
-            if path.is_relative_to(home):
-                return str("~" / path.relative_to(home))
-        except (ValueError, OSError):
-            pass
-        return str(path)
+        return to_home_relative_str(path)
 
     def set_templates_source(self, templates_dir: Path) -> None:
         """Set templates source directory.

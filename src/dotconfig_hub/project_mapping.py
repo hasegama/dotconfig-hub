@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from .utils import to_home_relative_str
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,18 +68,7 @@ class ProjectMapping:
             Normalized path string
 
         """
-        # Resolve and convert to absolute path
-        abs_path = project_path.resolve()
-
-        # Try to make path relative to home directory for portability
-        try:
-            home = Path.home()
-            if abs_path.is_relative_to(home):
-                return str("~" / abs_path.relative_to(home))
-        except (ValueError, OSError):
-            pass
-
-        return str(abs_path)
+        return to_home_relative_str(project_path)
 
     def add_project(self, project_path: Path, environment_sets: List[str]) -> None:
         """Add or update a project's environment set mapping.
@@ -219,25 +210,21 @@ class ProjectMapping:
 
         """
         cutoff = datetime.now().timestamp() - (hours * 3600)
-        old_projects = []
+        old_projects: List[Dict[str, Any]] = []
 
         for project_path, info in self.mapping_data["projects"].items():
             last_synced_str = info.get("last_synced")
 
+            # Treat missing or unparseable timestamps as "needs sync"
+            needs_sync = True
             if last_synced_str:
                 try:
                     last_synced = datetime.fromisoformat(last_synced_str)
-                    if last_synced.timestamp() < cutoff:
-                        project_info = info.copy()
-                        project_info["path"] = project_path
-                        old_projects.append(project_info)
+                    needs_sync = last_synced.timestamp() < cutoff
                 except (ValueError, TypeError):
-                    # Invalid timestamp format, consider it old
-                    project_info = info.copy()
-                    project_info["path"] = project_path
-                    old_projects.append(project_info)
-            else:
-                # No last_synced timestamp, consider it old
+                    pass
+
+            if needs_sync:
                 project_info = info.copy()
                 project_info["path"] = project_path
                 old_projects.append(project_info)

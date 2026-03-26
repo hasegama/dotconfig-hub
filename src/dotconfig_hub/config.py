@@ -199,6 +199,29 @@ class Config:
 
         return {}, ""
 
+    def _resolve_source_files(self, tool_config: Dict[str, Any]) -> List[Path]:
+        """Resolve absolute source file paths from a tool config dict.
+
+        Extracted so callers that already hold a tool_config can avoid a
+        redundant get_tool_config() round-trip.
+        """
+        project_dir = self.base_dir / tool_config.get("project_dir", "")
+        files = tool_config.get("files", [])
+
+        source_files: List[Path] = []
+        for entry in files:
+            file_entry = self._parse_file_entry(entry)
+            if "*" in file_entry.source or "?" in file_entry.source:
+                pattern_path = project_dir / file_entry.source
+                matched_files = glob.glob(str(pattern_path), recursive=True)
+                source_files.extend(Path(f) for f in matched_files)
+            else:
+                file_path = project_dir / file_entry.source
+                if file_path.exists():
+                    source_files.append(file_path)
+
+        return source_files
+
     def get_source_files(
         self, tool_name: str, env_set: Optional[str] = None
     ) -> List[Path]:
@@ -215,24 +238,7 @@ class Config:
         tool_config, _ = self.get_tool_config(tool_name, env_set)
         if not tool_config:
             return []
-
-        project_dir = self.base_dir / tool_config.get("project_dir", "")
-        files = tool_config.get("files", [])
-
-        source_files = []
-        for entry in files:
-            file_entry = self._parse_file_entry(entry)
-            # Handle glob patterns (rename not allowed with globs)
-            if "*" in file_entry.source or "?" in file_entry.source:
-                pattern_path = project_dir / file_entry.source
-                matched_files = glob.glob(str(pattern_path), recursive=True)
-                source_files.extend(Path(f) for f in matched_files)
-            else:
-                file_path = project_dir / file_entry.source
-                if file_path.exists():
-                    source_files.append(file_path)
-
-        return source_files
+        return self._resolve_source_files(tool_config)
 
     def get_source_files_relative(
         self, tool_name: str, env_set: Optional[str] = None
@@ -265,7 +271,7 @@ class Config:
             if file_entry.target:
                 rename_map[file_entry.source] = file_entry.target
 
-        source_files = self.get_source_files(tool_name, env_set)
+        source_files = self._resolve_source_files(tool_config)
 
         relative_map: Dict[str, Path] = {}
         for abs_path in source_files:
