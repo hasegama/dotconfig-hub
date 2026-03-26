@@ -98,7 +98,7 @@ ipython_config.py
 #   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
 #   This is especially recommended for binary packages to ensure reproducibility, and is more
 #   commonly ignored for libraries.
-uv.lock
+#uv.lock
 
 # poetry
 #   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
@@ -128,8 +128,7 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env*
-.env.json
+.env
 .venv
 env/
 venv/
@@ -180,66 +179,3 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
-.cursor/
-.cursorrules
-
-# GitHub
-.github_token
-.github/*
-!.github/PULL_REQUEST_TEMPLATE.md
-!.github/ISSUE_TEMPLATE/
-.github/ISSUE_TEMPLATE/*
-!.github/ISSUE_TEMPLATE/1-bug-report.md
-!.github/ISSUE_TEMPLATE/2-feature-request.md
-
-!.github/workflows/
-.github/workflows/*
-!.github/workflows/claude.yml
-!.github/workflows/claude-code-review.yml
-
-
-# Instruction files in project directories (manage these centrally)
-.claude/
-CLAUDE.md
-
-.codex/
-AGENTS.md
-
-.gemini/
-
-# IDE
-.vscode/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Project specific
-mcp.json
-.mcp.json
-.obsidian/
-.serena/
-local_ignore/
-inputs/
-out/
-dotconfig-hub.yaml
-*.bak
-*.bak.*
-o3-search-mcp/
-
-# Development
-Dockerfile
-.pre-commit-config.yaml
-.devcontainer/
-
-# Template directories: content is tracked via force-add (git add -f)
-# because they contain files matching other ignore rules (.vscode/, CLAUDE.md, etc.)
-my_project_init_template
-minimal_template
-
-# Keep the .gitkeep files
-!.gitkeep
-
-# startpack
-node_modules
-.next
