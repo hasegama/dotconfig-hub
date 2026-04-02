@@ -109,9 +109,17 @@ class Config:
                     source=source, is_init_only=is_init_only, target=target
                 )
             # Legacy format: {path: ..., init_only: ...}
-            return FileEntry(
-                source=entry["path"], is_init_only=entry.get("init_only", False)
+            if "path" in entry:
+                return FileEntry(
+                    source=entry["path"], is_init_only=entry.get("init_only", False)
+                )
+            # Dict entry missing both 'source' and 'path' keys is invalid.
+            # Raise ValueError instead of letting KeyError leak from internal access.
+            msg = (
+                f"Dict file entry must contain 'source' or 'path' key, "
+                f"got: {entry!r}"
             )
+            raise ValueError(msg)
         msg = f"Unexpected file entry type: {type(entry)}"
         raise TypeError(msg)
 

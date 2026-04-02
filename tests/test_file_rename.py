@@ -101,6 +101,21 @@ class TestParseFileEntry:
         with pytest.raises(TypeError, match="Unexpected file entry type"):
             Config._parse_file_entry(42)
 
+    def test_dict_without_source_or_path_raises_value_error(self) -> None:
+        """Dict entry missing both 'source' and 'path' raises ValueError."""
+        with pytest.raises(ValueError, match="must contain 'source' or 'path' key"):
+            Config._parse_file_entry({"target": ".git/info/exclude"})
+
+    def test_dict_with_only_init_only_raises_value_error(self) -> None:
+        """Dict entry with only 'init_only' key raises ValueError."""
+        with pytest.raises(ValueError, match="must contain 'source' or 'path' key"):
+            Config._parse_file_entry({"init_only": True})
+
+    def test_empty_dict_raises_value_error(self) -> None:
+        """Empty dict raises ValueError."""
+        with pytest.raises(ValueError, match="must contain 'source' or 'path' key"):
+            Config._parse_file_entry({})
+
 
 class TestGetFileMappingWithRename:
     """Test that get_file_mapping uses rename rules correctly."""
