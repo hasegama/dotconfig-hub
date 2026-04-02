@@ -2,7 +2,7 @@
 #
 # File entry formats:
 #   - string: "path/to/file"  (always synced)
-#   - dict:   { path: "file", init_only: true }  (synced only on first setup)
+#   - dict:   { source: "file", init_only: true }  (synced only on first setup)
 #   - dict:   { source: "hub_name", target: "project_name" }  (rename on delivery)
 #   - dict:   { source: "hub_name", target: "project_name", init_only: true }
 #
@@ -21,7 +21,7 @@ environment_sets:
         project_dir: my_project_init_template
         files:
           # CLAUDE.md is delivered once — each project customizes it
-          - { path: CLAUDE.md, init_only: true }
+          - { source: CLAUDE.md, init_only: true }
           # Shared commands stay in sync across projects
           - .claude/commands/*.md
           # Permission settings stay consistent
@@ -42,9 +42,9 @@ environment_sets:
           - .github/workflows/*.yml
           - .github/dependabot.yml
           # Project templates are delivered once — each project customizes them
-          - { path: ".github/ISSUE_TEMPLATE/1-bug-report.md", init_only: true }
-          - { path: ".github/ISSUE_TEMPLATE/2-feature-request.md", init_only: true }
-          - { path: ".github/PULL_REQUEST_TEMPLATE.md", init_only: true }
+          - { source: ".github/ISSUE_TEMPLATE/1-bug-report.md", init_only: true }
+          - { source: ".github/ISSUE_TEMPLATE/2-feature-request.md", init_only: true }
+          - { source: ".github/PULL_REQUEST_TEMPLATE.md", init_only: true }
 
       # Git configuration
       git_config:
@@ -65,4 +65,4 @@ environment_sets:
       git_config:
         project_dir: minimal_template
         files:
-          - { path: .gitignore, init_only: true }
+          - { source: .gitignore.hub, target: .gitignore, init_only: true }

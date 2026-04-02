@@ -10,6 +10,7 @@ dotconfig-hub keeps your dotfiles, IDE settings, AI assistant instructions, CI/C
 - **Bidirectional Sync** — Push templates to projects, or pull project improvements back to the hub.
 - **Interactive Mode** — When arguments are omitted, CLI prompts guide you through each action.
 - **Init-Only Files** — Mark files that should only be delivered on first setup and never overwritten.
+- **File Rename Rules** — Rename files during delivery (e.g., `.gitignore.hub` in the hub becomes `.gitignore` in the project).
 - **Compare & Merge** — Diff files across environment sets and selectively merge between them.
 - **Project Tracking** — Automatically records which projects use which environment sets.
 - **Safe Operations** — Dry-run previews, automatic backups, and content-based change detection.
@@ -184,7 +185,7 @@ environment_sets:
         files:
           - CLAUDE.md
           - .claude/commands/*.md
-          - { path: ".github/CODEOWNERS", init_only: true }
+          - { source: ".github/CODEOWNERS", init_only: true }
 
       vscode:
         project_dir: my_project_init_template
@@ -197,11 +198,18 @@ environment_sets:
         files:
           - .github/workflows/*.yml
           - .github/ISSUE_TEMPLATE/*.md
+
+      git_config:
+        project_dir: my_project_init_template
+        files:
+          # Renamed on delivery: .gitignore.hub in the hub -> .gitignore in the project
+          - { source: .gitignore.hub, target: .gitignore, init_only: true }
 ```
 
 File entries can be:
 - **String** — `"path/to/file"` or `"path/*.ext"` (glob patterns supported, always synced)
-- **Dict** — `{ path: "file", init_only: true }` (synced only on first setup; never overwrites existing files)
+- **Dict** — `{ source: "file", init_only: true }` (synced only on first setup; never overwrites existing files)
+- **Dict with rename** — `{ source: ".gitignore.hub", target: ".gitignore" }` (renamed during delivery; glob patterns not supported with rename)
 
 ### Project: `dotconfig-hub.yaml`
 
@@ -211,10 +219,6 @@ Created by `setup` and `init` in each project:
 templates_source: ~/dotconfig-templates
 active_environment_sets:
   - my_project_init_template
-sync_preferences:
-  auto_sync: false
-  create_backups: true
-  dry_run_default: false
 ```
 
 ### Project Mapping: `project_mapping.yaml`
