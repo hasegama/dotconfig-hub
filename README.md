@@ -14,7 +14,7 @@ dotconfig-hub keeps your dotfiles, IDE settings, AI assistant instructions, CI/C
 - **Compare & Merge** — Diff files across environment sets and selectively merge between them.
 - **Project Tracking** — Automatically records which projects use which environment sets.
 - **Backup Exclusion** — `.bak` backup files created during sync are automatically excluded from future syncs.
-- **Safe Operations** — Dry-run previews, automatic backups with rotation, and content-based change detection.
+- **Safe Operations** — Dry-run previews, timestamped automatic backups, and content-based change detection.
 
 ## Installation
 
@@ -213,7 +213,7 @@ File entries can be:
 - **Dict with rename** — `{ source: ".gitignore.hub", target: ".gitignore" }` (renamed during delivery; glob patterns not supported with rename)
 
 Tool-level options:
-- **`include_backup_files: true`** — Include `.bak` backup files in sync. By default, `.bak` files (created automatically during sync as backups) are excluded from file discovery. Set this to `true` on a tool if you need to sync `.bak` files explicitly. Backup rotation: `.bak` always holds the most recent backup; older backups are rotated to `.bak.<timestamp>` (timestamp derived from the file's mtime).
+- **`include_backup_files: true`** — Include `.bak` backup files in sync. By default, `.bak` files (created automatically during sync as timestamped backups like `.bak.20260407_153000`) are excluded from file discovery. Set this to `true` on a tool if you need to sync `.bak` files explicitly.
 
 ### Project: `dotconfig-hub.yaml`
 
