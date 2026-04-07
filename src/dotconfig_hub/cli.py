@@ -401,7 +401,9 @@ def init(env_set: str, force: bool) -> None:
     help="Automatically sync in specified direction without prompting",
 )
 @click.option(
-    "--include-init-only",
+    "--all",
+    "-a",
+    "sync_all",
     is_flag=True,
     help="Include init_only files even if they already exist at the target",
 )
@@ -411,7 +413,7 @@ def sync(
     file: str,
     dry_run: bool,
     auto_sync: str,
-    include_init_only: bool,
+    sync_all: bool,
 ) -> None:
     """Synchronize configuration files between templates and project.
 
@@ -425,7 +427,7 @@ def sync(
         dotconfig-hub sync --tool vscode      # Sync only VS Code settings
         dotconfig-hub sync --file .gitignore  # Sync only .gitignore file
         dotconfig-hub sync --auto-sync local  # Auto-sync to local
-        dotconfig-hub sync --include-init-only  # Force sync init_only files too
+        dotconfig-hub sync --all              # Include init_only files too
 
     """
     console.print("\n[bold blue]dotconfig-hub Sync[/bold blue]")
@@ -448,8 +450,8 @@ def sync(
     cfg = Config(config_path=templates_config_path)
     target_directory = Path.cwd()
     project_mapping = ProjectMapping(project_config.get_templates_source())
-    # include_init_only: Issue #6 — re-deliver init_only files when explicitly requested
-    syncer = FileSyncer(cfg, project_mapping, include_init_only=include_init_only)
+    # --all: include init_only files even if target exists
+    syncer = FileSyncer(cfg, project_mapping, include_init_only=sync_all)
 
     active_env_sets = project_config.get_active_environment_sets()
     if env_set:
