@@ -6,6 +6,11 @@ from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 
 import yaml
 
+# Default suffixes excluded from sync.
+# .bak files are auto-created by dotconfig-hub during sync as backups
+# and should not be picked up as sync targets.
+DEFAULT_EXCLUDE_SUFFIXES: Tuple[str, ...] = (".bak",)
+
 
 class FileEntry(NamedTuple):
     """Parsed file entry from config.yaml.
@@ -73,6 +78,23 @@ class Config:
                 }
             }
             del self.config_data["tools"]
+
+    @staticmethod
+    def _is_excluded(
+        file_path: Path,
+        exclude_suffixes: Tuple[str, ...] = DEFAULT_EXCLUDE_SUFFIXES,
+    ) -> bool:
+        """Check if a file should be excluded from sync based on its suffixes.
+
+        A file is excluded if any of its suffix components matches an exclude
+        suffix.  For example, ``ci.yml.bak`` has suffixes ``['.yml', '.bak']``
+        and is excluded when ``'.bak'`` is in the list.  Timestamped backups
+        like ``ci.yml.bak.20260325_202320`` are also caught because ``'.bak'``
+        appears in their suffixes list.
+        """
+        if not exclude_suffixes:
+            return False
+        return any(s in exclude_suffixes for s in file_path.suffixes)
 
     @staticmethod
     def _parse_file_entry(entry: Union[str, Dict[str, Any]]) -> FileEntry:
@@ -207,7 +229,11 @@ class Config:
 
         return {}, ""
 
-    def _resolve_source_files(self, tool_config: Dict[str, Any]) -> List[Path]:
+    def _resolve_source_files(
+        self,
+        tool_config: Dict[str, Any],
+        exclude_suffixes: Tuple[str, ...] = DEFAULT_EXCLUDE_SUFFIXES,
+    ) -> List[Path]:
         """Resolve absolute source file paths from a tool config dict.
 
         Extracted so callers that already hold a tool_config can avoid a
@@ -222,22 +248,31 @@ class Config:
             if "*" in file_entry.source or "?" in file_entry.source:
                 pattern_path = project_dir / file_entry.source
                 matched_files = glob.glob(str(pattern_path), recursive=True)
-                source_files.extend(Path(f) for f in matched_files)
+                for f in matched_files:
+                    p = Path(f)
+                    if not self._is_excluded(p, exclude_suffixes):
+                        source_files.append(p)
             else:
                 file_path = project_dir / file_entry.source
-                if file_path.exists():
+                if file_path.exists() and not self._is_excluded(
+                    file_path, exclude_suffixes
+                ):
                     source_files.append(file_path)
 
         return source_files
 
     def get_source_files(
-        self, tool_name: str, env_set: Optional[str] = None
+        self,
+        tool_name: str,
+        env_set: Optional[str] = None,
+        exclude_suffixes: Tuple[str, ...] = DEFAULT_EXCLUDE_SUFFIXES,
     ) -> List[Path]:
         """Get list of source files for a tool from the central repository.
 
         Args:
             tool_name: Name of the tool
             env_set: Environment set name
+            exclude_suffixes: File suffixes to exclude (e.g. .bak)
 
         Returns:
             List of absolute paths to source files
@@ -246,10 +281,13 @@ class Config:
         tool_config, _ = self.get_tool_config(tool_name, env_set)
         if not tool_config:
             return []
-        return self._resolve_source_files(tool_config)
+        return self._resolve_source_files(tool_config, exclude_suffixes)
 
     def get_source_files_relative(
-        self, tool_name: str, env_set: Optional[str] = None
+        self,
+        tool_name: str,
+        env_set: Optional[str] = None,
+        exclude_suffixes: Tuple[str, ...] = DEFAULT_EXCLUDE_SUFFIXES,
     ) -> Dict[str, Path]:
         """Get source files mapped by their relative path from project_dir.
 
@@ -259,6 +297,7 @@ class Config:
         Args:
             tool_name: Name of the tool
             env_set: Environment set name
+            exclude_suffixes: File suffixes to exclude (e.g. .bak)
 
         Returns:
             Dict mapping relative path strings to absolute file paths
@@ -279,7 +318,7 @@ class Config:
             if file_entry.target:
                 rename_map[file_entry.source] = file_entry.target
 
-        source_files = self._resolve_source_files(tool_config)
+        source_files = self._resolve_source_files(tool_config, exclude_suffixes)
 
         relative_map: Dict[str, Path] = {}
         for abs_path in source_files:
@@ -294,7 +333,11 @@ class Config:
         return relative_map
 
     def get_target_files(
-        self, tool_name: str, target_dir: Path, env_set: Optional[str] = None
+        self,
+        tool_name: str,
+        target_dir: Path,
+        env_set: Optional[str] = None,
+        exclude_suffixes: Tuple[str, ...] = DEFAULT_EXCLUDE_SUFFIXES,
     ) -> List[Path]:
         """Get list of target files for a tool in the target directory.
 
@@ -302,6 +345,7 @@ class Config:
             tool_name: Name of the tool
             target_dir: Target directory (project directory)
             env_set: Environment set name
+            exclude_suffixes: File suffixes to exclude (e.g. .bak)
 
         Returns:
             List of absolute paths to target files
@@ -322,15 +366,22 @@ class Config:
             if "*" in file_entry.source or "?" in file_entry.source:
                 pattern_path = target_dir / file_entry.source
                 matched_files = glob.glob(str(pattern_path), recursive=True)
-                target_files.extend(Path(f) for f in matched_files)
+                for f in matched_files:
+                    p = Path(f)
+                    if not self._is_excluded(p, exclude_suffixes):
+                        target_files.append(p)
             else:
                 file_path = target_dir / target_name
-                target_files.append(file_path)  # Include even if doesn't exist
+                if not self._is_excluded(file_path, exclude_suffixes):
+                    target_files.append(file_path)  # Include even if doesn't exist
 
         return target_files
 
     def get_file_mapping(
-        self, tool_name: str, target_dir: Path, env_set: Optional[str] = None
+        self,
+        tool_name: str,
+        target_dir: Path,
+        env_set: Optional[str] = None,
     ) -> Dict[Path, Path]:
         """Get mapping of source files to target files.
 
@@ -347,6 +398,13 @@ class Config:
         if not tool_config:
             return {}
 
+        # Allow per-tool override: include_backup_files: true in config.yaml
+        # disables the default .bak exclusion for this tool.
+        if tool_config.get("include_backup_files", False):
+            exclude_suffixes: Tuple[str, ...] = ()
+        else:
+            exclude_suffixes = DEFAULT_EXCLUDE_SUFFIXES
+
         project_dir = self.base_dir / tool_config.get("project_dir", "")
         files = tool_config.get("files", [])
 
@@ -359,6 +417,8 @@ class Config:
             if "*" not in file_entry.source and "?" not in file_entry.source:
                 source = project_dir / file_entry.source
                 target = target_dir / target_name
+                if self._is_excluded(source, exclude_suffixes):
+                    continue
                 # Include in mapping only if at least one side is a file
                 # (skip directories to avoid IsADirectoryError during sync)
                 if source.is_file() or target.is_file():
@@ -373,10 +433,12 @@ class Config:
                 source_files = glob.glob(str(source_pattern), recursive=True)
                 target_files = glob.glob(str(target_pattern), recursive=True)
 
-                # Process source files (skip directories)
+                # Process source files (skip directories and excluded files)
                 for source_file in source_files:
                     source_path = Path(source_file)
                     if not source_path.is_file():
+                        continue
+                    if self._is_excluded(source_path, exclude_suffixes):
                         continue
                     try:
                         relative_path = source_path.relative_to(project_dir)
@@ -386,10 +448,12 @@ class Config:
                         continue
 
                 # Process target files that don't have corresponding source files
-                # (skip directories)
+                # (skip directories and excluded files)
                 for target_file in target_files:
                     target_path = Path(target_file)
                     if not target_path.is_file():
+                        continue
+                    if self._is_excluded(target_path, exclude_suffixes):
                         continue
                     try:
                         relative_path = target_path.relative_to(target_dir)
