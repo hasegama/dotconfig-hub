@@ -439,10 +439,13 @@ class FileSyncer:
         # Create backup if destination exists
         if create_backup and dst.exists():
             backup_path = dst.with_suffix(dst.suffix + ".bak")
-            # Add timestamp if backup already exists
+            # Rotate existing .bak to .bak.<timestamp> using its mtime
             if backup_path.exists():
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_path = dst.with_suffix(f"{dst.suffix}.bak.{timestamp}")
+                mtime = backup_path.stat().st_mtime
+                timestamp = datetime.fromtimestamp(mtime).strftime("%Y%m%d_%H%M%S")
+                rotated_path = dst.with_suffix(f"{dst.suffix}.bak.{timestamp}")
+                backup_path.rename(rotated_path)
+                self.console.print(f"[dim]Rotated old backup: {rotated_path}[/dim]")
             shutil.copy2(dst, backup_path)
             self.console.print(f"[dim]Created backup: {backup_path}[/dim]")
 
