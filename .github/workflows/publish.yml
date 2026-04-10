@@ -1,0 +1,119 @@
+# Publish to PyPI / TestPyPI when a version tag (v*) is pushed.
+#
+# Routing rules (Pattern B: tag-name based):
+#   - Pre-release tags (v*-rc*, v*-beta*, v*-alpha*) -> TestPyPI
+#   - Stable tags (v*)                               -> PyPI
+#
+# Prerequisites:
+#   1. Register this workflow as a Trusted Publisher on BOTH indexes:
+#      - PyPI:     https://pypi.org/manage/account/publishing/
+#        Owner: hasegama, Repo: dotconfig-hub, Workflow: publish.yml, Environment: pypi
+#      - TestPyPI: https://test.pypi.org/manage/account/publishing/
+#        Owner: hasegama, Repo: dotconfig-hub, Workflow: publish.yml, Environment: testpypi
+#   2. Create GitHub Environments "pypi" and "testpypi" in repository settings.
+#      Recommended: add required reviewers on "pypi" for defense in depth.
+#   3. Recommended: add a tag protection rule for "v*" in repository settings
+#      so only trusted maintainers can trigger releases.
+#
+# References:
+#   - https://docs.pypi.org/trusted-publishers/using-a-publisher/
+#   - https://github.com/pypa/gh-action-pypi-publish
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" 2>/dev/null || pip install -e .
+          pip install pytest
+
+      - name: Run tests
+        run: pytest
+
+  build:
+    name: Build distribution
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: python -m pip install --upgrade pip build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  # Pre-release tags go to TestPyPI so maintainers can validate the artifact
+  # before cutting a stable release. Skipped for stable tags.
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    if: contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha')
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/dotconfig-hub/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  # Stable tags go straight to PyPI. The condition is the inverse of the
+  # pre-release guard above so exactly one publish job runs per tag.
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    if: "!contains(github.ref, '-rc') && !contains(github.ref, '-beta') && !contains(github.ref, '-alpha')"
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/dotconfig-hub/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
