@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dotconfig-hub"
-version = "0.0.0-dev"
+version = "0.2.0"
 description = "Central management and distribution tool for favorite dotfiles and configuration templates"
 readme = "README.md"
 requires-python = ">=3.9"
