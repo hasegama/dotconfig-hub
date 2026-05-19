@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from rich.prompt import Prompt
+from rich.prompt import Confirm, Prompt
 
 from .config import Config
 from .diff import DiffViewer
@@ -20,6 +20,8 @@ class SyncDirection:
     TO_LOCAL = "local"  # Update local files from central
     TO_REMOTE = "remote"  # Update central files from local
     SKIP = "skip"  # Skip this file
+    DELETE_LOCAL = "delete_local"  # Backup-rename the Project-side file
+    DELETE_REMOTE = "delete_remote"  # Backup-rename the Hub-side file
 
 
 class FileSyncer:
@@ -334,14 +336,38 @@ class FileSyncer:
         if not dry_run:
             synced = self._perform_sync(source, target, direction)
             if synced:
-                self.console.print(f"[green]✓ Synced {target.name}[/green]")
+                if direction == SyncDirection.DELETE_LOCAL:
+                    self.console.print(
+                        f"[green]✓ Deleted Project-side {target.name} "
+                        f"(backup retained)[/green]"
+                    )
+                elif direction == SyncDirection.DELETE_REMOTE:
+                    self.console.print(
+                        f"[green]✓ Deleted Hub-side {source.name} "
+                        f"(backup retained)[/green]"
+                    )
+                else:
+                    self.console.print(f"[green]✓ Synced {target.name}[/green]")
             return synced
         else:
-            action = "Would sync (dry run)"
             if direction == SyncDirection.TO_LOCAL:
-                self.console.print(f"[cyan]{action}: Hub → Project[/cyan]")
-            else:
-                self.console.print(f"[cyan]{action}: Project → Hub[/cyan]")
+                self.console.print(
+                    "[cyan]Would sync (dry run): Hub → Project[/cyan]"
+                )
+            elif direction == SyncDirection.TO_REMOTE:
+                self.console.print(
+                    "[cyan]Would sync (dry run): Project → Hub[/cyan]"
+                )
+            elif direction == SyncDirection.DELETE_LOCAL:
+                self.console.print(
+                    f"[cyan]Would delete (dry run): Project-side "
+                    f"{target} (with backup)[/cyan]"
+                )
+            elif direction == SyncDirection.DELETE_REMOTE:
+                self.console.print(
+                    f"[cyan]Would delete (dry run): Hub-side "
+                    f"{source} (with backup)[/cyan]"
+                )
             return True
 
     def _prompt_sync_direction(self, source: Path, target: Path) -> str:
@@ -354,7 +380,8 @@ class FileSyncer:
 
         Returns:
         -------
-            Sync direction (TO_LOCAL, TO_REMOTE, or SKIP)
+            Sync direction (TO_LOCAL, TO_REMOTE, DELETE_LOCAL,
+            DELETE_REMOTE, or SKIP)
 
         """
         choices = {
@@ -365,6 +392,20 @@ class FileSyncer:
             "c": ("[C]hanges only (context diff)", None),
         }
 
+        # Issue #15: offer a delete-with-backup option when one side is missing
+        source_missing = not source.exists()
+        target_missing = not target.exists()
+        if target_missing and not source_missing:
+            choices["x"] = (
+                "Delete Hub-side file (with backup) [[X]]",
+                SyncDirection.DELETE_REMOTE,
+            )
+        elif source_missing and not target_missing:
+            choices["x"] = (
+                "Delete Project-side file (with backup) [[X]]",
+                SyncDirection.DELETE_LOCAL,
+            )
+
         while True:
             # Display action choices
             self.console.print("\n[bold cyan]Choose action:[/bold cyan]")
@@ -372,7 +413,7 @@ class FileSyncer:
                 self.console.print(f"  {desc}")
 
             choice = Prompt.ask(
-                "Select [p/h/s/d/c]",
+                f"Select [{'/'.join(choices.keys())}]",
                 choices=[key for key in choices.keys()],
                 default="s",
             ).lower()
@@ -410,10 +451,55 @@ class FileSyncer:
         elif direction == SyncDirection.TO_REMOTE:
             # Project → Hub
             return self._copy_file(target, source, create_backup=True)
+        elif direction == SyncDirection.DELETE_LOCAL:
+            return self._delete_with_backup(target, side="Project")
+        elif direction == SyncDirection.DELETE_REMOTE:
+            return self._delete_with_backup(source, side="Hub")
         self.console.print(
             f"[yellow]⚠ Skipped: unknown sync direction '{direction}'[/yellow]"
         )
         return False
+
+    def _delete_with_backup(self, path: Path, side: str) -> bool:
+        """Rename a file to a timestamped .bak file after user confirmation.
+
+        Used when one side of a sync pair is missing and the user chooses to
+        drop the surviving file instead of propagating it. The file is not
+        permanently removed — it is renamed to ``<name>.bak.<timestamp>`` so
+        it can be recovered manually. Related: Issue #15.
+
+        Args:
+        ----
+            path: File to rename out.
+            side: Human-readable label ("Hub" or "Project") used in the
+                confirmation prompt and status messages.
+
+        Returns:
+        -------
+            True if the file was renamed, False if it was missing or the
+            user declined the confirmation.
+
+        """
+        if not path.exists():
+            self.console.print(
+                f"[yellow]⚠ Skipped: file does not exist: {path}[/yellow]"
+            )
+            return False
+
+        if not Confirm.ask(
+            f"Delete the {side}-side file? ({path})",
+            default=False,
+        ):
+            self.console.print("[yellow]Deletion cancelled[/yellow]")
+            return False
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = path.with_suffix(f"{path.suffix}.bak.{timestamp}")
+        path.rename(backup_path)
+        self.console.print(
+            f"[dim]Renamed {path.name} → {backup_path.name}[/dim]"
+        )
+        return True
 
     def _copy_file(self, src: Path, dst: Path, create_backup: bool = True) -> bool:
         """Copy file with optional backup.
