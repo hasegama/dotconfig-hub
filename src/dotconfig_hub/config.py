@@ -1,6 +1,7 @@
 """Configuration management for AI instructions sync tool."""
 
 import glob
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 
@@ -19,12 +20,15 @@ class FileEntry(NamedTuple):
         source: Hub-side path (e.g. ".gitignore.hub")
         is_init_only: If True, file is only synced on first setup (Issue #6)
         target: Project-side path when renaming (None = same as source, Issue #10)
+        is_negation: If True, this entry excludes files matching source pattern
+                     (gitignore-style '!' prefix, Issue #14)
 
     """
 
     source: str
     is_init_only: bool
     target: Optional[str] = None
+    is_negation: bool = False
 
 
 class Config:
@@ -97,6 +101,60 @@ class Config:
         return any(s in exclude_suffixes for s in file_path.suffixes)
 
     @staticmethod
+    def _apply_negation(
+        file_list: List[Path],
+        negation_pattern: str,
+        base_dir: Path,
+    ) -> List[Path]:
+        """Remove files matching a negation pattern from the list.
+
+        Matches against relative paths from base_dir using fnmatch,
+        following gitignore-style semantics (Issue #14).
+
+        Args:
+            file_list: Current list of resolved file paths (absolute)
+            negation_pattern: Pattern to match against (without '!' prefix)
+            base_dir: Base directory for computing relative paths
+
+        Returns:
+            Filtered list with matching files removed
+
+        """
+        result: List[Path] = []
+        for p in file_list:
+            try:
+                rel = str(p.relative_to(base_dir))
+            except ValueError:
+                result.append(p)
+                continue
+            if not fnmatch(rel, negation_pattern):
+                result.append(p)
+        return result
+
+    @staticmethod
+    def _matches_negation(
+        file_path: Path,
+        negation_pattern: str,
+        base_dir: Path,
+    ) -> bool:
+        """Check if a file path matches a negation pattern.
+
+        Args:
+            file_path: Absolute path to check
+            negation_pattern: Pattern to match against (without '!' prefix)
+            base_dir: Base directory for computing relative paths
+
+        Returns:
+            True if the file matches the negation pattern
+
+        """
+        try:
+            rel = str(file_path.relative_to(base_dir))
+        except ValueError:
+            return False
+        return fnmatch(rel, negation_pattern)
+
+    @staticmethod
     def _parse_file_entry(entry: Union[str, Dict[str, Any]]) -> FileEntry:
         """Parse a file entry from the YAML config into a FileEntry.
 
@@ -108,11 +166,21 @@ class Config:
           - dict:   {source: ".gitignore.hub", target: ".gitignore", init_only: true}
               -> FileEntry(source=".gitignore.hub", is_init_only=True, target=".gitignore")
 
+        Negation pattern (gitignore-style '!' prefix, Issue #14):
+          - string: "!path/to/file"
+              -> FileEntry(source="path/to/file", is_negation=True)
+          - dict:   {source: "!configs/local.toml"}
+              -> FileEntry(source="configs/local.toml", is_negation=True)
+
         Glob patterns combined with rename (target) are not supported.
 
-        Related: Issue #6 - init_only delivery mode, Issue #10 - file rename rules
+        Related: Issue #6 - init_only delivery mode, Issue #10 - file rename rules,
+                 Issue #14 - negation patterns
         """
         if isinstance(entry, str):
+            # Negation pattern: "!pattern" excludes matching files
+            if entry.startswith("!"):
+                return FileEntry(source=entry[1:], is_init_only=False, is_negation=True)
             return FileEntry(source=entry, is_init_only=False)
         if isinstance(entry, dict):
             # New rename format: {source: ..., target: ...}
@@ -120,6 +188,17 @@ class Config:
                 source = entry["source"]
                 target = entry.get("target")
                 is_init_only = entry.get("init_only", False)
+                # Negation pattern: {source: "!pattern"}
+                if source.startswith("!"):
+                    if target:
+                        msg = (
+                            f"Negation patterns cannot be combined with rename: "
+                            f"source='{source}', target='{target}'"
+                        )
+                        raise ValueError(msg)
+                    return FileEntry(
+                        source=source[1:], is_init_only=False, is_negation=True
+                    )
                 # Glob patterns with rename are not allowed
                 if target and ("*" in source or "?" in source):
                     msg = (
@@ -238,6 +317,9 @@ class Config:
 
         Extracted so callers that already hold a tool_config can avoid a
         redundant get_tool_config() round-trip.
+
+        Entries are evaluated in order (gitignore semantics, Issue #14):
+        positive patterns add files, negation patterns ('!' prefix) remove them.
         """
         project_dir = self.base_dir / tool_config.get("project_dir", "")
         files = tool_config.get("files", [])
@@ -245,7 +327,12 @@ class Config:
         source_files: List[Path] = []
         for entry in files:
             file_entry = self._parse_file_entry(entry)
-            if "*" in file_entry.source or "?" in file_entry.source:
+            if file_entry.is_negation:
+                # Remove files matching the negation pattern
+                source_files = self._apply_negation(
+                    source_files, file_entry.source, project_dir
+                )
+            elif "*" in file_entry.source or "?" in file_entry.source:
                 pattern_path = project_dir / file_entry.source
                 matched_files = glob.glob(str(pattern_path), recursive=True)
                 for f in matched_files:
@@ -357,9 +444,15 @@ class Config:
 
         files = tool_config.get("files", [])
 
-        target_files = []
+        target_files: List[Path] = []
         for entry in files:
             file_entry = self._parse_file_entry(entry)
+            if file_entry.is_negation:
+                # Remove files matching the negation pattern (Issue #14)
+                target_files = self._apply_negation(
+                    target_files, file_entry.source, target_dir
+                )
+                continue
             # Use target name (project-side) if rename is configured
             target_name = file_entry.target or file_entry.source
             # Handle glob patterns (rename not allowed with globs)
@@ -408,9 +501,24 @@ class Config:
         project_dir = self.base_dir / tool_config.get("project_dir", "")
         files = tool_config.get("files", [])
 
-        mapping = {}
+        mapping: Dict[Path, Path] = {}
         for entry in files:
             file_entry = self._parse_file_entry(entry)
+
+            # Negation pattern: remove matching entries from mapping (Issue #14)
+            if file_entry.is_negation:
+                keys_to_remove = [
+                    src
+                    for src in mapping
+                    if self._matches_negation(src, file_entry.source, project_dir)
+                    or self._matches_negation(
+                        mapping[src], file_entry.source, target_dir
+                    )
+                ]
+                for key in keys_to_remove:
+                    del mapping[key]
+                continue
+
             # Use target name (project-side) if rename is configured
             target_name = file_entry.target or file_entry.source
             # For non-glob patterns, create direct mapping
