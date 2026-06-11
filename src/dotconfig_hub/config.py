@@ -155,6 +155,7 @@ class Config:
             return False
         return fnmatch(rel, negation_pattern)
 
+    @staticmethod
     def _glob(pattern: str, *, recursive: bool = False) -> List[str]:
         """Glob that matches dotfiles for wildcard patterns.
 
