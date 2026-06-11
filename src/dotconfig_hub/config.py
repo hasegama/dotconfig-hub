@@ -13,6 +13,14 @@ import yaml
 # and should not be picked up as sync targets.
 DEFAULT_EXCLUDE_SUFFIXES: Tuple[str, ...] = (".bak",)
 
+# Default gitignore-style patterns excluded from sync, applied globally to
+# every tool entry on both hub and project sides. OS metadata files such as
+# .DS_Store became discoverable once glob patterns started matching dotfiles
+# (Issue #16), so they are excluded here by default. Users can extend this
+# list via the top-level `exclude:` key in config.yaml (patterns are merged
+# with, not replacing, these defaults).
+DEFAULT_EXCLUDE_PATTERNS: Tuple[str, ...] = (".DS_Store",)
+
 
 class FileEntry(NamedTuple):
     """Parsed file entry from config.yaml.
@@ -46,6 +54,11 @@ class Config:
         self.config_data = self._load_config()
         self.base_dir = self.config_path.parent if self.config_path else Path.cwd()
         self._migrate_old_config()
+        # Global exclude patterns: defaults merged with the optional top-level
+        # `exclude:` key (the key may be absent, hence .get with a default).
+        self.exclude_patterns: Tuple[str, ...] = DEFAULT_EXCLUDE_PATTERNS + tuple(
+            self.config_data.get("exclude", [])
+        )
 
     def _find_config_file(self) -> Optional[Path]:
         """Search for config.yaml in current and parent directories."""
@@ -88,18 +101,50 @@ class Config:
     def _is_excluded(
         file_path: Path,
         exclude_suffixes: Tuple[str, ...] = DEFAULT_EXCLUDE_SUFFIXES,
+        exclude_patterns: Tuple[str, ...] = DEFAULT_EXCLUDE_PATTERNS,
+        base_dir: Optional[Path] = None,
     ) -> bool:
-        """Check if a file should be excluded from sync based on its suffixes.
+        """Check if a file should be excluded from sync.
 
-        A file is excluded if any of its suffix components matches an exclude
-        suffix.  For example, ``ci.yml.bak`` has suffixes ``['.yml', '.bak']``
-        and is excluded when ``'.bak'`` is in the list.  Timestamped backups
-        like ``ci.yml.bak.20260325_202320`` are also caught because ``'.bak'``
-        appears in their suffixes list.
+        Two independent checks are applied:
+
+        1. Suffix check: a file is excluded if any of its suffix components
+           matches an exclude suffix.  For example, ``ci.yml.bak`` has
+           suffixes ``['.yml', '.bak']`` and is excluded when ``'.bak'`` is
+           in the list.  Timestamped backups like
+           ``ci.yml.bak.20260325_202320`` are also caught because ``'.bak'``
+           appears in their suffixes list.
+
+        2. Pattern check (gitignore semantics): patterns without a ``/`` are
+           matched against the file name only, so ``.DS_Store`` excludes the
+           file at any depth.  Patterns containing a ``/`` are matched against
+           the path relative to ``base_dir`` (skipped when ``base_dir`` is
+           None or the file is outside it).
+
+        Args:
+            file_path: Path to check (absolute or relative)
+            exclude_suffixes: File suffixes to exclude (e.g. .bak)
+            exclude_patterns: Global gitignore-style exclude patterns
+            base_dir: Base directory for relative-path pattern matching
+
         """
-        if not exclude_suffixes:
-            return False
-        return any(s in exclude_suffixes for s in file_path.suffixes)
+        if exclude_suffixes and any(s in exclude_suffixes for s in file_path.suffixes):
+            return True
+
+        for pattern in exclude_patterns:
+            if "/" in pattern:
+                if base_dir is None:
+                    continue
+                try:
+                    rel = str(file_path.relative_to(base_dir))
+                except ValueError:
+                    continue
+                if fnmatch(rel, pattern):
+                    return True
+            elif fnmatch(file_path.name, pattern):
+                return True
+
+        return False
 
     @staticmethod
     def _apply_negation(
@@ -359,12 +404,14 @@ class Config:
                 matched_files = self._glob(str(pattern_path), recursive=True)
                 for f in matched_files:
                     p = Path(f)
-                    if not self._is_excluded(p, exclude_suffixes):
+                    if not self._is_excluded(
+                        p, exclude_suffixes, self.exclude_patterns, project_dir
+                    ):
                         source_files.append(p)
             else:
                 file_path = project_dir / file_entry.source
                 if file_path.exists() and not self._is_excluded(
-                    file_path, exclude_suffixes
+                    file_path, exclude_suffixes, self.exclude_patterns, project_dir
                 ):
                     source_files.append(file_path)
 
@@ -483,11 +530,15 @@ class Config:
                 matched_files = self._glob(str(pattern_path), recursive=True)
                 for f in matched_files:
                     p = Path(f)
-                    if not self._is_excluded(p, exclude_suffixes):
+                    if not self._is_excluded(
+                        p, exclude_suffixes, self.exclude_patterns, target_dir
+                    ):
                         target_files.append(p)
             else:
                 file_path = target_dir / target_name
-                if not self._is_excluded(file_path, exclude_suffixes):
+                if not self._is_excluded(
+                    file_path, exclude_suffixes, self.exclude_patterns, target_dir
+                ):
                     target_files.append(file_path)  # Include even if doesn't exist
 
         return target_files
@@ -547,7 +598,9 @@ class Config:
             if "*" not in file_entry.source and "?" not in file_entry.source:
                 source = project_dir / file_entry.source
                 target = target_dir / target_name
-                if self._is_excluded(source, exclude_suffixes):
+                if self._is_excluded(
+                    source, exclude_suffixes, self.exclude_patterns, project_dir
+                ):
                     continue
                 # Include in mapping only if at least one side is a file
                 # (skip directories to avoid IsADirectoryError during sync)
@@ -585,7 +638,12 @@ class Config:
                     source_path = Path(source_file)
                     if not source_path.is_file():
                         continue
-                    if self._is_excluded(source_path, exclude_suffixes):
+                    if self._is_excluded(
+                        source_path,
+                        exclude_suffixes,
+                        self.exclude_patterns,
+                        project_dir,
+                    ):
                         continue
                     if source_path in mapping:
                         continue
@@ -605,7 +663,9 @@ class Config:
                     target_path = Path(target_file)
                     if not target_path.is_file():
                         continue
-                    if self._is_excluded(target_path, exclude_suffixes):
+                    if self._is_excluded(
+                        target_path, exclude_suffixes, self.exclude_patterns, target_dir
+                    ):
                         continue
                     if target_path in used_targets:
                         continue

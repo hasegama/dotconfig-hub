@@ -14,6 +14,7 @@ dotconfig-hub keeps your dotfiles, IDE settings, AI assistant instructions, CI/C
 - **Compare & Merge** — Diff files across environment sets and selectively merge between them.
 - **Project Tracking** — Automatically records which projects use which environment sets.
 - **Backup Exclusion** — `.bak` backup files created during sync are automatically excluded from future syncs.
+- **Global Excludes** — OS metadata files (`.DS_Store`) are excluded everywhere by default; add your own patterns via the top-level `exclude:` key.
 - **Safe Operations** — Dry-run previews, timestamped automatic backups, and content-based change detection.
 
 ## Installation
@@ -177,6 +178,12 @@ dotconfig-hub compare set_a set_b --merge --dry-run
 Defines environment sets and their tools in the templates repository:
 
 ```yaml
+# Global exclude patterns (optional, gitignore-style).
+# Merged with the built-in defaults (.DS_Store), applied to every tool entry
+# on both hub and project sides, regardless of entry order.
+exclude:
+  - Thumbs.db
+
 environment_sets:
   my_project_init_template:
     description: "Complete project initialization template"
@@ -214,6 +221,9 @@ File entries can be:
 
 Tool-level options:
 - **`include_backup_files: true`** — Include `.bak` backup files in sync. By default, `.bak` files (created automatically during sync as timestamped backups like `.bak.20260407_153000`) are excluded from file discovery. Set this to `true` on a tool if you need to sync `.bak` files explicitly.
+
+Top-level options:
+- **`exclude:`** — List of gitignore-style patterns excluded globally from file discovery. Patterns are merged with the built-in defaults (`.DS_Store`) and apply to every tool entry on both hub and project sides. A pattern without `/` matches the file name at any depth (e.g. `Thumbs.db`); a pattern containing `/` matches the path relative to the tool's `project_dir` (e.g. `build/*`). Use this for files that should never sync anywhere; use a `"!pattern"` entry inside a tool's `files` list only for entry-local, one-off exclusions.
 
 ### Project: `dotconfig-hub.yaml`
 
