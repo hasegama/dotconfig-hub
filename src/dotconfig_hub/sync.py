@@ -407,11 +407,15 @@ class FileSyncer:
             )
 
         while True:
-            # Repeat the file name right above the action prompt: with a large
-            # diff (or after re-displaying it via d/c) the header printed
+            # Repeat the full file paths right above the action prompt: with a
+            # large diff (or after re-displaying it via d/c) the header printed
             # before the diff has scrolled away and the user can no longer
-            # tell which file the prompt refers to.
-            self.console.print(f"\n[bold]File: {target.name}[/bold]")
+            # tell which file the prompt refers to. Use a "select"-oriented
+            # heading (not "Comparing") since the user is about to choose an
+            # action here (Issue #13 follow-up).
+            self.console.print("\n[bold blue]Select sync direction for:[/bold blue]")
+            self.console.print(f"Hub: [green]{source}[/green]")
+            self.console.print(f"Project: [yellow]{target}[/yellow]")
             self.console.print("[bold cyan]Choose action:[/bold cyan]")
             for _key, (desc, _) in choices.items():
                 self.console.print(f"  {desc}")
