@@ -552,6 +552,17 @@ class Config:
                 # Include in mapping only if at least one side is a file
                 # (skip directories to avoid IsADirectoryError during sync)
                 if source.is_file() or target.is_file():
+                    # A renamed entry (source != target name) may overlap with
+                    # glob-derived entries: e.g. "hub.mcp.json" renamed to
+                    # ".mcp.json" while a glob also matches ".mcp.json" on the
+                    # project side. Drop stale entries pointing at the same
+                    # target so the rename mapping wins regardless of the
+                    # order of entries in the config.
+                    stale_keys = [
+                        k for k, v in mapping.items() if v == target and k != source
+                    ]
+                    for k in stale_keys:
+                        del mapping[k]
                     mapping[source] = target
             else:
                 # For glob patterns, match files from both source and target
@@ -563,6 +574,12 @@ class Config:
                 source_files = self._glob(str(source_pattern), recursive=True)
                 target_files = self._glob(str(target_pattern), recursive=True)
 
+                # Targets already claimed by explicit (possibly renamed)
+                # entries: glob matches must not duplicate them (e.g. a
+                # project-side ".mcp.json" produced by a rename entry would
+                # otherwise reappear as a missing-source glob entry).
+                used_targets = set(mapping.values())
+
                 # Process source files (skip directories and excluded files)
                 for source_file in source_files:
                     source_path = Path(source_file)
@@ -570,10 +587,15 @@ class Config:
                         continue
                     if self._is_excluded(source_path, exclude_suffixes):
                         continue
+                    if source_path in mapping:
+                        continue
                     try:
                         relative_path = source_path.relative_to(project_dir)
                         target_path = target_dir / relative_path
+                        if target_path in used_targets:
+                            continue
                         mapping[source_path] = target_path
+                        used_targets.add(target_path)
                     except ValueError:
                         continue
 
@@ -585,12 +607,15 @@ class Config:
                         continue
                     if self._is_excluded(target_path, exclude_suffixes):
                         continue
+                    if target_path in used_targets:
+                        continue
                     try:
                         relative_path = target_path.relative_to(target_dir)
                         source_path = project_dir / relative_path
                         # Only add if not already in mapping
                         if source_path not in mapping:
                             mapping[source_path] = target_path
+                            used_targets.add(target_path)
                     except ValueError:
                         continue
 

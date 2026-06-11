@@ -253,3 +253,31 @@ class TestGetInitOnlyFilesWithRename:
         init_only = config.get_init_only_files("git_config", "test_set")
 
         assert len(init_only) == 0
+
+
+class TestRenameGlobOverlap:
+    """A renamed file must not be duplicated by an overlapping glob.
+
+    Regression test: hub-side "hub.mcp.json" renamed to project-side
+    ".mcp.json" while a glob like "**/*" also matches both files. Without
+    target-uniqueness guards the glob created phantom mappings
+    (missing-source ".mcp.json" / missing-target "hub.mcp.json").
+    """
+
+    @pytest.mark.parametrize("glob_first", [True, False])
+    def test_rename_entry_wins_over_glob(
+        self, temp_hub_dir: Path, temp_target_dir: Path, glob_first: bool
+    ) -> None:
+        """Only the rename mapping remains, regardless of entry order."""
+        (temp_hub_dir / "hub.mcp.json").write_text('{"hub": true}')
+        (temp_target_dir / ".mcp.json").write_text('{"hub": true}')
+
+        rename_entry = {"source": "hub.mcp.json", "target": ".mcp.json"}
+        files = ["*", rename_entry] if glob_first else [rename_entry, "*"]
+        config = _write_config(temp_hub_dir, "tool", files)
+
+        mapping = config.get_file_mapping("tool", temp_target_dir, "test_set")
+
+        # Drop the config.yaml itself if matched by the glob
+        mapping = {k: v for k, v in mapping.items() if "config.yaml" not in k.name}
+        assert mapping == {temp_hub_dir / "hub.mcp.json": temp_target_dir / ".mcp.json"}
