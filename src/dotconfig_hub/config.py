@@ -1,6 +1,7 @@
 """Configuration management for AI instructions sync tool."""
 
 import glob
+import sys
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
@@ -153,6 +154,26 @@ class Config:
         except ValueError:
             return False
         return fnmatch(rel, negation_pattern)
+
+    def _glob(pattern: str, *, recursive: bool = False) -> List[str]:
+        """Glob that matches dotfiles for wildcard patterns.
+
+        Python's stdlib ``glob.glob()`` skips files whose name starts with ``.``
+        by default. On Python 3.11+ we pass ``include_hidden=True``. On older
+        versions we run a second pass with a ``.``-prefixed pattern to pick up
+        dotfiles when the pattern's leaf starts with a wildcard.
+
+        Related: Issue #16 - glob patterns must match dotfiles.
+        """
+        if sys.version_info >= (3, 11):
+            return glob.glob(pattern, recursive=recursive, include_hidden=True)
+
+        results: Set[str] = set(glob.glob(pattern, recursive=recursive))
+        leaf = Path(pattern).name
+        if leaf.startswith(("*", "?")):
+            dot_pattern = str(Path(pattern).parent / ("." + leaf))
+            results.update(glob.glob(dot_pattern, recursive=recursive))
+        return list(results)
 
     @staticmethod
     def _parse_file_entry(entry: Union[str, Dict[str, Any]]) -> FileEntry:
@@ -334,7 +355,7 @@ class Config:
                 )
             elif "*" in file_entry.source or "?" in file_entry.source:
                 pattern_path = project_dir / file_entry.source
-                matched_files = glob.glob(str(pattern_path), recursive=True)
+                matched_files = self._glob(str(pattern_path), recursive=True)
                 for f in matched_files:
                     p = Path(f)
                     if not self._is_excluded(p, exclude_suffixes):
@@ -458,7 +479,7 @@ class Config:
             # Handle glob patterns (rename not allowed with globs)
             if "*" in file_entry.source or "?" in file_entry.source:
                 pattern_path = target_dir / file_entry.source
-                matched_files = glob.glob(str(pattern_path), recursive=True)
+                matched_files = self._glob(str(pattern_path), recursive=True)
                 for f in matched_files:
                     p = Path(f)
                     if not self._is_excluded(p, exclude_suffixes):
@@ -538,8 +559,8 @@ class Config:
                 target_pattern = target_dir / file_entry.source
 
                 # Get files from both sides
-                source_files = glob.glob(str(source_pattern), recursive=True)
-                target_files = glob.glob(str(target_pattern), recursive=True)
+                source_files = self._glob(str(source_pattern), recursive=True)
+                target_files = self._glob(str(target_pattern), recursive=True)
 
                 # Process source files (skip directories and excluded files)
                 for source_file in source_files:
