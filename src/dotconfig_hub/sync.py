@@ -351,13 +351,9 @@ class FileSyncer:
             return synced
         else:
             if direction == SyncDirection.TO_LOCAL:
-                self.console.print(
-                    "[cyan]Would sync (dry run): Hub → Project[/cyan]"
-                )
+                self.console.print("[cyan]Would sync (dry run): Hub → Project[/cyan]")
             elif direction == SyncDirection.TO_REMOTE:
-                self.console.print(
-                    "[cyan]Would sync (dry run): Project → Hub[/cyan]"
-                )
+                self.console.print("[cyan]Would sync (dry run): Project → Hub[/cyan]")
             elif direction == SyncDirection.DELETE_LOCAL:
                 self.console.print(
                     f"[cyan]Would delete (dry run): Project-side "
@@ -392,17 +388,21 @@ class FileSyncer:
             "c": ("[C]hanges only (context diff)", None),
         }
 
-        # Issue #15: offer a delete-with-backup option when one side is missing
+        # Issue #15: when one side is missing, "updating" the side that still
+        # has the file means deleting it (with backup) so both sides match.
+        # Reuse the familiar p/h keys instead of a separate key to keep the
+        # prompt simple.
         source_missing = not source.exists()
         target_missing = not target.exists()
         if target_missing and not source_missing:
-            choices["x"] = (
-                "Delete Hub-side file (with backup) [[X]]",
+            choices["h"] = (
+                "Update [H]ub (Project → Hub): " "delete Hub-side file (with backup)",
                 SyncDirection.DELETE_REMOTE,
             )
         elif source_missing and not target_missing:
-            choices["x"] = (
-                "Delete Project-side file (with backup) [[X]]",
+            choices["p"] = (
+                "Update [P]roject (Hub → Project): "
+                "delete Project-side file (with backup)",
                 SyncDirection.DELETE_LOCAL,
             )
 
@@ -496,9 +496,7 @@ class FileSyncer:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = path.with_suffix(f"{path.suffix}.bak.{timestamp}")
         path.rename(backup_path)
-        self.console.print(
-            f"[dim]Renamed {path.name} → {backup_path.name}[/dim]"
-        )
+        self.console.print(f"[dim]Renamed {path.name} → {backup_path.name}[/dim]")
         return True
 
     def _copy_file(self, src: Path, dst: Path, create_backup: bool = True) -> bool:

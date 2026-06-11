@@ -54,9 +54,10 @@ class TestDeleteWithBackup:
         path.write_text("line-length = 88\n")
 
         fake_now = datetime(2026, 4, 7, 12, 34, 56)
-        with patch("dotconfig_hub.sync.Confirm.ask", return_value=True), patch(
-            "dotconfig_hub.sync.datetime"
-        ) as mock_dt:
+        with (
+            patch("dotconfig_hub.sync.Confirm.ask", return_value=True),
+            patch("dotconfig_hub.sync.datetime") as mock_dt,
+        ):
             mock_dt.now.return_value = fake_now
             mock_dt.fromtimestamp = datetime.fromtimestamp
             result = syncer._delete_with_backup(path, side="Project")
@@ -75,9 +76,10 @@ class TestDeleteWithBackup:
         path.write_text("*.pyc\n")
 
         fake_now = datetime(2026, 4, 7, 12, 34, 56)
-        with patch("dotconfig_hub.sync.Confirm.ask", return_value=True), patch(
-            "dotconfig_hub.sync.datetime"
-        ) as mock_dt:
+        with (
+            patch("dotconfig_hub.sync.Confirm.ask", return_value=True),
+            patch("dotconfig_hub.sync.datetime") as mock_dt,
+        ):
             mock_dt.now.return_value = fake_now
             mock_dt.fromtimestamp = datetime.fromtimestamp
             assert syncer._delete_with_backup(path, side="Hub") is True
@@ -85,9 +87,7 @@ class TestDeleteWithBackup:
         assert (temp_dir / ".gitignore.bak.20260407_123456").exists()
         assert not path.exists()
 
-    def test_skip_when_user_declines(
-        self, syncer: FileSyncer, temp_dir: Path
-    ) -> None:
+    def test_skip_when_user_declines(self, syncer: FileSyncer, temp_dir: Path) -> None:
         """File is left untouched when the user declines the confirmation."""
         path = temp_dir / "ruff.toml"
         path.write_text("contents")
@@ -101,9 +101,7 @@ class TestDeleteWithBackup:
         bak_files = [f for f in temp_dir.iterdir() if ".bak." in f.name]
         assert bak_files == []
 
-    def test_skip_when_path_missing(
-        self, syncer: FileSyncer, temp_dir: Path
-    ) -> None:
+    def test_skip_when_path_missing(self, syncer: FileSyncer, temp_dir: Path) -> None:
         """Returns False when the file to delete does not exist."""
         path = temp_dir / "missing.toml"
 
@@ -116,52 +114,67 @@ class TestDeleteWithBackup:
 
 
 class TestPromptOffersDeleteOption:
-    """The interactive prompt should expose 'x' only when one side is missing."""
+    """When one side is missing, p/h switch to delete-with-backup actions."""
 
-    def test_delete_option_hidden_when_both_files_exist(
+    def test_copy_actions_when_both_files_exist(
         self, syncer: FileSyncer, temp_dir: Path
     ) -> None:
-        """No delete option when both sides exist (regular Different case)."""
+        """p/h keep their copy semantics when both sides exist."""
         source = temp_dir / "hub.txt"
         target = temp_dir / "proj.txt"
         source.write_text("a")
         target.write_text("b")
 
-        with patch("dotconfig_hub.sync.Prompt.ask", return_value="s") as mock_ask:
-            syncer._prompt_sync_direction(source, target)
+        with patch("dotconfig_hub.sync.Prompt.ask", return_value="p") as mock_ask:
+            direction = syncer._prompt_sync_direction(source, target)
 
         choices = mock_ask.call_args.kwargs["choices"]
         assert "x" not in choices
+        assert direction == SyncDirection.TO_LOCAL
 
-    def test_delete_option_shown_when_target_missing(
+    def test_h_deletes_hub_side_when_target_missing(
         self, syncer: FileSyncer, temp_dir: Path
     ) -> None:
-        """When the Project side is missing, choosing 'x' deletes the Hub side."""
+        """When the Project side is missing, 'h' deletes the Hub side."""
         source = temp_dir / "hub.txt"
         target = temp_dir / "proj.txt"
         source.write_text("a")  # Hub exists
         # target intentionally missing
 
-        with patch("dotconfig_hub.sync.Prompt.ask", return_value="x") as mock_ask:
+        with patch("dotconfig_hub.sync.Prompt.ask", return_value="h") as mock_ask:
             direction = syncer._prompt_sync_direction(source, target)
 
-        assert "x" in mock_ask.call_args.kwargs["choices"]
+        assert "x" not in mock_ask.call_args.kwargs["choices"]
         assert direction == SyncDirection.DELETE_REMOTE
 
-    def test_delete_option_shown_when_source_missing(
+    def test_p_deletes_project_side_when_source_missing(
         self, syncer: FileSyncer, temp_dir: Path
     ) -> None:
-        """When the Hub side is missing, choosing 'x' deletes the Project side."""
+        """When the Hub side is missing, 'p' deletes the Project side."""
         source = temp_dir / "hub.txt"
         target = temp_dir / "proj.txt"
         target.write_text("b")  # Project exists
         # source intentionally missing
 
-        with patch("dotconfig_hub.sync.Prompt.ask", return_value="x") as mock_ask:
+        with patch("dotconfig_hub.sync.Prompt.ask", return_value="p") as mock_ask:
             direction = syncer._prompt_sync_direction(source, target)
 
-        assert "x" in mock_ask.call_args.kwargs["choices"]
+        assert "x" not in mock_ask.call_args.kwargs["choices"]
         assert direction == SyncDirection.DELETE_LOCAL
+
+    def test_p_still_copies_when_target_missing(
+        self, syncer: FileSyncer, temp_dir: Path
+    ) -> None:
+        """When only the Project side is missing, 'p' still copies Hub → Project."""
+        source = temp_dir / "hub.txt"
+        target = temp_dir / "proj.txt"
+        source.write_text("a")  # Hub exists
+        # target intentionally missing
+
+        with patch("dotconfig_hub.sync.Prompt.ask", return_value="p"):
+            direction = syncer._prompt_sync_direction(source, target)
+
+        assert direction == SyncDirection.TO_LOCAL
 
 
 class TestPerformSyncDeleteDispatch:
@@ -176,9 +189,7 @@ class TestPerformSyncDeleteDispatch:
         target.write_text("project-only")
 
         with patch("dotconfig_hub.sync.Confirm.ask", return_value=True):
-            result = syncer._perform_sync(
-                source, target, SyncDirection.DELETE_LOCAL
-            )
+            result = syncer._perform_sync(source, target, SyncDirection.DELETE_LOCAL)
 
         assert result is True
         assert not target.exists()
@@ -196,9 +207,7 @@ class TestPerformSyncDeleteDispatch:
         target = temp_dir / "proj.txt"  # not created — Project side missing
 
         with patch("dotconfig_hub.sync.Confirm.ask", return_value=True):
-            result = syncer._perform_sync(
-                source, target, SyncDirection.DELETE_REMOTE
-            )
+            result = syncer._perform_sync(source, target, SyncDirection.DELETE_REMOTE)
 
         assert result is True
         assert not source.exists()
@@ -219,11 +228,14 @@ class TestSyncFileDryRunDelete:
         target = temp_dir / "proj.txt"
         target.write_text("keep me")
 
-        with patch.object(
-            syncer,
-            "_prompt_sync_direction",
-            return_value=SyncDirection.DELETE_LOCAL,
-        ), patch.object(syncer.diff_viewer, "display_diff"):
+        with (
+            patch.object(
+                syncer,
+                "_prompt_sync_direction",
+                return_value=SyncDirection.DELETE_LOCAL,
+            ),
+            patch.object(syncer.diff_viewer, "display_diff"),
+        ):
             result = syncer._sync_file(source, target, auto_sync=None, dry_run=True)
 
         assert result is True
@@ -240,11 +252,14 @@ class TestSyncFileDryRunDelete:
         source.write_text("keep me")
         target = temp_dir / "proj.txt"  # Project missing
 
-        with patch.object(
-            syncer,
-            "_prompt_sync_direction",
-            return_value=SyncDirection.DELETE_REMOTE,
-        ), patch.object(syncer.diff_viewer, "display_diff"):
+        with (
+            patch.object(
+                syncer,
+                "_prompt_sync_direction",
+                return_value=SyncDirection.DELETE_REMOTE,
+            ),
+            patch.object(syncer.diff_viewer, "display_diff"),
+        ):
             result = syncer._sync_file(source, target, auto_sync=None, dry_run=True)
 
         assert result is True
