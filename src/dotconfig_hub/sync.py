@@ -413,13 +413,14 @@ class FileSyncer:
             # tell which file the prompt refers to. Use a "select"-oriented
             # heading (not "Comparing") since the user is about to choose an
             # action here (Issue #13 follow-up).
-            self.console.print("\n[bold blue]Select sync direction for:[/bold blue]")
-            # Only show paths that actually exist: a missing side is already
-            # reported as "... does not exist" by the diff display, and a path
-            # to a nonexistent file would just be noise here.
-            if not source_missing:
+            # Skip the whole block when either side is missing: in that case
+            # there is no large diff to scroll past, and the "... does not
+            # exist" report just above already names both paths.
+            if not source_missing and not target_missing:
+                self.console.print(
+                    "\n[bold blue]Select sync direction for:[/bold blue]"
+                )
                 self.console.print(f"Hub: [green]{source}[/green]")
-            if not target_missing:
                 self.console.print(f"Project: [yellow]{target}[/yellow]")
             self.console.print("[bold cyan]Choose action:[/bold cyan]")
             for _key, (desc, _) in choices.items():
