@@ -407,8 +407,12 @@ class FileSyncer:
             )
 
         while True:
-            # Display action choices
-            self.console.print("\n[bold cyan]Choose action:[/bold cyan]")
+            # Repeat the file name right above the action prompt: with a large
+            # diff (or after re-displaying it via d/c) the header printed
+            # before the diff has scrolled away and the user can no longer
+            # tell which file the prompt refers to.
+            self.console.print(f"\n[bold]File: {target.name}[/bold]")
+            self.console.print("[bold cyan]Choose action:[/bold cyan]")
             for _key, (desc, _) in choices.items():
                 self.console.print(f"  {desc}")
 
