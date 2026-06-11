@@ -125,70 +125,47 @@ class DiffViewer:
             self.console.print("\n[green]Files are identical[/green]")
             return
 
-        # Create syntax highlighted diff
+        # Create syntax highlighted diff.
+        # Gutter line numbers are disabled on purpose: they would be relative
+        # to the diff text, not the source files. Absolute positions are
+        # conveyed by the standard "@@ -X,Y +A,B @@" hunk headers (issue #13).
         diff_text = "\n".join(diff_lines)
-        syntax = Syntax(diff_text, "diff", theme="monokai", line_numbers=True)
+        syntax = Syntax(diff_text, "diff", theme="monokai", line_numbers=False)
 
         self.console.print("\n[bold]Differences:[/bold]")
         self.console.print(Panel(syntax, title="Unified Diff", border_style="blue"))
 
     def _display_context_diff(self, source_path: Path, target_path: Path) -> None:
-        """Display context diff showing only changed lines with minimal context."""
+        """Display changed lines with minimal (1 line) context.
+
+        Uses unified diff format so the "@@ -X,Y +A,B @@" hunk headers carry
+        the actual line numbers of both files (issue #13). The previous
+        implementation filtered a context diff and lost line number
+        information entirely.
+        """
         source_lines = self._read_file_lines(source_path)
         target_lines = self._read_file_lines(target_path)
 
-        # Get context diff with minimal context (1 line)
-        diff = difflib.context_diff(
-            target_lines,
-            source_lines,
-            fromfile=f"Project: {target_path.name}",
-            tofile=f"Hub: {source_path.name}",
-            n=1,  # Only 1 line of context
-            lineterm="",
+        diff_lines = list(
+            difflib.unified_diff(
+                target_lines,
+                source_lines,
+                fromfile=f"Project: {target_path.name}",
+                tofile=f"Hub: {source_path.name}",
+                n=1,  # Only 1 line of context
+                lineterm="",
+            )
         )
-
-        diff_lines = list(diff)
 
         if not diff_lines:
             self.console.print("\n[green]Files are identical[/green]")
             return
 
-        # Filter to show only changed sections
-        filtered_lines = []
-        in_change_section = False
+        diff_text = "\n".join(diff_lines)
+        syntax = Syntax(diff_text, "diff", theme="monokai", line_numbers=False)
 
-        for line in diff_lines:
-            if line.startswith("***"):
-                # Section header
-                if "Target:" in line or "Source:" in line:
-                    filtered_lines.append(line)
-                elif "," in line and ("c" in line or "d" in line or "a" in line):
-                    # Change indicator line
-                    filtered_lines.append(line)
-                    in_change_section = True
-            elif line.startswith("---"):
-                if in_change_section:
-                    filtered_lines.append(line)
-            elif in_change_section:
-                # Changed lines (-, +, !, or context)
-                if line.startswith(("- ", "+ ", "! ", "  ")):
-                    filtered_lines.append(line)
-                elif line.strip() == "":
-                    # Empty line - keep minimal context
-                    filtered_lines.append(line)
-                else:
-                    in_change_section = False
-
-        if filtered_lines:
-            diff_text = "\n".join(filtered_lines)
-            syntax = Syntax(diff_text, "diff", theme="monokai", line_numbers=False)
-
-            self.console.print("\n[bold]Changes only (with minimal context):[/bold]")
-            self.console.print(
-                Panel(syntax, title="Context Diff", border_style="yellow")
-            )
-        else:
-            self.console.print("\n[green]No significant changes to display[/green]")
+        self.console.print("\n[bold]Changes only (with minimal context):[/bold]")
+        self.console.print(Panel(syntax, title="Context Diff", border_style="yellow"))
 
     @staticmethod
     def _get_lexer(file_path: Path) -> str:

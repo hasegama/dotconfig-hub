@@ -251,7 +251,10 @@ class EnvSetComparer:
             diff_lines = self.diff_viewer.get_diff_lines(pair.path_a, pair.path_b)
             if diff_lines:
                 diff_text = "\n".join(diff_lines)
-                syntax = Syntax(diff_text, "diff", theme="monokai", line_numbers=True)
+                # line_numbers=False: absolute positions come from the
+                # "@@ -X,Y +A,B @@" hunk headers; a gutter would show numbers
+                # relative to the diff text instead (issue #13).
+                syntax = Syntax(diff_text, "diff", theme="monokai", line_numbers=False)
                 self.console.print(
                     Panel(syntax, title="Differences", border_style="blue")
                 )
