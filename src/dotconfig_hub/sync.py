@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.prompt import Confirm, Prompt
 
+from .backup import BACKUP_TIMESTAMP_FORMAT, make_backup_path
 from .config import Config
 from .diff import DiffViewer
 from .project_mapping import ProjectMapping
@@ -48,6 +49,22 @@ class FileSyncer:
         self.include_init_only = include_init_only
         self.console = Console()
         self.diff_viewer = DiffViewer()
+        # Backup version suffix shared by the whole sync session.
+        # Lazily fixed on first use (see _get_backup_timestamp).
+        self._session_timestamp: Optional[str] = None
+
+    def _get_backup_timestamp(self) -> str:
+        """Return the backup timestamp for this sync session.
+
+        The timestamp is fixed once per session (on first backup creation)
+        so that every backup produced by one sync run shares the same
+        ``.bak.<timestamp>`` suffix. This lets one suffix represent one
+        consistent "version" that the rollback command can restore as a
+        whole, instead of each file getting its own write-time timestamp.
+        """
+        if self._session_timestamp is None:
+            self._session_timestamp = datetime.now().strftime(BACKUP_TIMESTAMP_FORMAT)
+        return self._session_timestamp
 
     def sync_tool(
         self,
@@ -507,8 +524,7 @@ class FileSyncer:
             self.console.print("[yellow]Deletion cancelled[/yellow]")
             return False
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = path.with_suffix(f"{path.suffix}.bak.{timestamp}")
+        backup_path = make_backup_path(path, self._get_backup_timestamp())
         path.rename(backup_path)
         self.console.print(f"[dim]Renamed {path.name} → {backup_path.name}[/dim]")
         return True
@@ -536,8 +552,7 @@ class FileSyncer:
 
         # Create timestamped backup if destination exists
         if create_backup and dst.exists():
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = dst.with_suffix(f"{dst.suffix}.bak.{timestamp}")
+            backup_path = make_backup_path(dst, self._get_backup_timestamp())
             shutil.copy2(dst, backup_path)
             self.console.print(f"[dim]Created backup: {backup_path}[/dim]")
 

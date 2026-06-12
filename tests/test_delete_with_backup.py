@@ -41,6 +41,9 @@ def _setup_syncer(syncer: FileSyncer) -> None:
 
     syncer.console = Console()
     syncer.diff_viewer = DiffViewer()
+    # Normally set in __init__ (skipped here via __new__); the backup
+    # timestamp is fixed per sync session and lazily initialized.
+    syncer._session_timestamp = None
 
 
 class TestDeleteWithBackup:

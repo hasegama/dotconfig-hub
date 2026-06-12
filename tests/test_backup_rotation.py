@@ -35,6 +35,9 @@ def _setup_syncer(syncer: FileSyncer) -> None:
     from rich.console import Console
 
     syncer.console = Console()
+    # Normally set in __init__ (skipped here via __new__); the backup
+    # timestamp is fixed per sync session and lazily initialized.
+    syncer._session_timestamp = None
 
 
 class TestCopyFileBackup:
@@ -90,7 +93,7 @@ class TestCopyFileBackup:
     def test_multiple_syncs_create_separate_backups(
         self, syncer: FileSyncer, temp_dir: Path
     ) -> None:
-        """Each sync creates a distinct timestamped backup."""
+        """Each sync session creates a distinct timestamped backup."""
         src = temp_dir / "src.txt"
         dst = temp_dir / "dst.txt"
 
@@ -103,6 +106,8 @@ class TestCopyFileBackup:
         for i, fake_now in enumerate(times):
             dst.write_text(f"v{i + 1}")
             src.write_text(f"v{i + 2}")
+            # Reset the session so each iteration acts as a new sync run
+            syncer._session_timestamp = None
             with patch("dotconfig_hub.sync.datetime") as mock_dt:
                 mock_dt.now.return_value = fake_now
                 mock_dt.fromtimestamp = datetime.fromtimestamp

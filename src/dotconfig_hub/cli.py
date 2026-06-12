@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
+from .backup import BACKUP_TIMESTAMP_FORMAT, BackupManager
 from .compare import EnvSetComparer
 from .config import Config
 from .project_config import ProjectConfig
@@ -524,6 +525,166 @@ def sync(
     except Exception as e:
         console.print(f"\n[red]Error during sync: {e}[/red]")
         raise
+
+
+def _resolve_backup_root(target: str) -> Optional[Path]:
+    """Resolve the directory that clean/rollback operate on.
+
+    'project' maps to the current working directory and 'hub' to the
+    templates source. Hub and Project are handled separately on purpose
+    so each side's backups can be managed independently.
+    Related: BackupManager (backup.py).
+    """
+    if target == "project":
+        return Path.cwd()
+    project_config = ProjectConfig()
+    source = project_config.get_templates_source()
+    if source is None:
+        console.print(
+            "[red]Templates source is not configured. "
+            "Run 'dotconfig-hub setup' first[/red]"
+        )
+    return source
+
+
+def _display_backup_versions(backups: dict) -> None:
+    """Show available backup versions (timestamp groups) as a table."""
+    table = Table(title="Backup versions")
+    table.add_column("Version", style="cyan")
+    table.add_column("Created", style="white")
+    table.add_column("Files", justify="right")
+    for timestamp in sorted(backups, reverse=True):
+        created = datetime.strptime(timestamp, BACKUP_TIMESTAMP_FORMAT)
+        table.add_row(
+            timestamp,
+            created.strftime("%Y-%m-%d %H:%M:%S"),
+            str(len(backups[timestamp])),
+        )
+    console.print(table)
+
+
+@main.command()
+@click.argument("target", type=click.Choice(["project", "hub"]))
+@click.option(
+    "--dry-run",
+    "-n",
+    is_flag=True,
+    help="Show what would be deleted without deleting",
+)
+@click.option("--yes", "-y", is_flag=True, help="Skip the confirmation prompt")
+def clean(target: str, dry_run: bool, yes: bool) -> None:
+    """Delete timestamped .bak files created by sync.
+
+    TARGET is 'project' (current directory) or 'hub' (templates source).
+    Only files matching <name>.bak.<YYYYMMDD_HHMMSS> are deleted; plain
+    .bak files are left untouched.
+
+    Examples
+    --------
+        dotconfig-hub clean project           # Clean backups in this project
+        dotconfig-hub clean hub               # Clean backups in the hub
+        dotconfig-hub clean project --dry-run # Preview deletions
+
+    """
+    root = _resolve_backup_root(target)
+    if root is None:
+        return
+
+    console.print(f"\n[bold blue]dotconfig-hub Clean[/bold blue] ({target}: {root})")
+
+    manager = BackupManager(root)
+    backups = manager.find_backups()
+    if not backups:
+        console.print("[green]No backup files found[/green]")
+        return
+
+    _display_backup_versions(backups)
+    total = sum(len(paths) for paths in backups.values())
+
+    if dry_run:
+        console.print(
+            f"[yellow]DRY RUN: {total} backup file(s) would be deleted[/yellow]"
+        )
+        for timestamp in sorted(backups):
+            for path in backups[timestamp]:
+                console.print(f"  [dim]{path}[/dim]")
+        return
+
+    if not yes and not Confirm.ask(f"Delete {total} backup file(s)?", default=False):
+        console.print("[yellow]Clean cancelled[/yellow]")
+        return
+
+    removed = manager.clean()
+    console.print(f"[green]✓ Deleted {len(removed)} backup file(s)[/green]")
+
+
+@main.command()
+@click.argument("target", type=click.Choice(["project", "hub"]))
+@click.option(
+    "--version",
+    "-v",
+    "version",
+    help="Backup version (YYYYMMDD_HHMMSS) to restore. Prompted when omitted.",
+)
+@click.option("--yes", "-y", is_flag=True, help="Skip the confirmation prompt")
+def rollback(target: str, version: Optional[str], yes: bool) -> None:
+    """Roll back files to a selected backup version.
+
+    Restores every <name>.bak.<VERSION> file under TARGET to its original
+    path. The displaced current files are preserved as a new backup version
+    stamped with the rollback time, so the rollback itself can be undone.
+
+    Examples
+    --------
+        dotconfig-hub rollback project                       # Pick interactively
+        dotconfig-hub rollback hub --version 20260612_153000
+
+    """
+    root = _resolve_backup_root(target)
+    if root is None:
+        return
+
+    console.print(f"\n[bold blue]dotconfig-hub Rollback[/bold blue] ({target}: {root})")
+
+    manager = BackupManager(root)
+    backups = manager.find_backups()
+    if not backups:
+        console.print("[green]No backup files found[/green]")
+        return
+
+    _display_backup_versions(backups)
+    versions = sorted(backups, reverse=True)
+
+    if version is None:
+        version = Prompt.ask(
+            "Select version to restore", choices=versions, default=versions[0]
+        )
+    elif version not in backups:
+        console.print(
+            f"[red]Version '{version}' not found. "
+            f"Available: {', '.join(versions)}[/red]"
+        )
+        return
+
+    console.print(f"\n[bold]Files in version {version}:[/bold]")
+    for path in backups[version]:
+        console.print(f"  [dim]{path}[/dim]")
+
+    if not yes and not Confirm.ask(
+        f"Restore {len(backups[version])} file(s) from version {version}?",
+        default=False,
+    ):
+        console.print("[yellow]Rollback cancelled[/yellow]")
+        return
+
+    restored = manager.rollback(version)
+    for backup_file, original in restored:
+        console.print(
+            f"  [green]✓[/green] {original} [dim](from {backup_file.name})[/dim]"
+        )
+    console.print(
+        f"[green]✓ Restored {len(restored)} file(s) from version {version}[/green]"
+    )
 
 
 @main.command()
