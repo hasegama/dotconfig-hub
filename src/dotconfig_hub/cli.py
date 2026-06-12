@@ -291,6 +291,46 @@ def global_config(templates_dir: Path, env_sets: str) -> None:
     )
 
 
+def _resolve_env_set_choice(
+    templates_config: dict, env_set: Optional[str]
+) -> Optional[str]:
+    """Resolve an environment set name, prompting interactively if needed.
+
+    Shared by `init` and `add`. Returns None when the given name is unknown.
+    """
+    available_sets = [*templates_config["environment_sets"]]
+
+    if not env_set:
+        console.print("Available environment sets:")
+        for i, set_name in enumerate(available_sets, 1):
+            set_config = templates_config["environment_sets"][set_name]
+            description = set_config.get("description", "No description")
+            console.print(f"  {i}. [cyan]{set_name}[/cyan]: {description}")
+
+        while True:
+            choice = Prompt.ask(
+                "\nSelect environment set (number or name)",
+                choices=[str(i) for i in range(1, len(available_sets) + 1)]
+                + available_sets,
+                show_choices=False,
+            )
+
+            if choice.isdigit():
+                idx = int(choice) - 1
+                if 0 <= idx < len(available_sets):
+                    return available_sets[idx]
+            elif choice in available_sets:
+                return choice
+
+            console.print("[red]Invalid choice[/red]")
+
+    if env_set not in available_sets:
+        console.print(f"[red]Unknown environment set: {env_set}[/red]")
+        console.print(f"[yellow]Available sets: {', '.join(available_sets)}[/yellow]")
+        return None
+    return env_set
+
+
 @main.command()
 @click.option("--env-set", "-e", help="Environment set to initialize")
 @click.option(
@@ -327,37 +367,8 @@ def init(env_set: str, force: bool) -> None:
     with open(templates_config_path, "r", encoding="utf-8") as f:
         templates_config = yaml.safe_load(f)
 
-    available_sets = [*templates_config["environment_sets"]]
-
-    if not env_set:
-        console.print("Available environment sets:")
-        for i, set_name in enumerate(available_sets, 1):
-            set_config = templates_config["environment_sets"][set_name]
-            description = set_config.get("description", "No description")
-            console.print(f"  {i}. [cyan]{set_name}[/cyan]: {description}")
-
-        while True:
-            choice = Prompt.ask(
-                "\nSelect environment set (number or name)",
-                choices=[str(i) for i in range(1, len(available_sets) + 1)]
-                + available_sets,
-                show_choices=False,
-            )
-
-            if choice.isdigit():
-                idx = int(choice) - 1
-                if 0 <= idx < len(available_sets):
-                    env_set = available_sets[idx]
-                    break
-            elif choice in available_sets:
-                env_set = choice
-                break
-
-            console.print("[red]Invalid choice[/red]")
-
-    if env_set not in available_sets:
-        console.print(f"[red]Unknown environment set: {env_set}[/red]")
-        console.print(f"[yellow]Available sets: {', '.join(available_sets)}[/yellow]")
+    env_set = _resolve_env_set_choice(templates_config, env_set)
+    if env_set is None:
         return
 
     current_sets = project_config.get_active_environment_sets()
@@ -391,6 +402,67 @@ def init(env_set: str, force: bool) -> None:
     console.print("\n[cyan]Next steps:[/cyan]")
     console.print("  • Run 'dotconfig-hub sync' to synchronize files")
     console.print("  • Run 'dotconfig-hub list' to see configured tools")
+
+
+@main.command()
+@click.option("--env-set", "-e", help="Environment set to add")
+def add(env_set: str) -> None:
+    """Add an environment set to the project's active sets.
+
+    Unlike 'init', which replaces the active environment set, this command
+    appends the selected set. Active sets are synced sequentially in the
+    order they were added.
+
+    Examples
+    --------
+        dotconfig-hub add --env-set my_project_init_template
+        dotconfig-hub add -e my_project_init_template
+
+    """
+    console.print("\n[bold blue]dotconfig-hub Add Environment Set[/bold blue]")
+
+    project_config = ProjectConfig()
+
+    issues = project_config.validate_setup()
+    if issues:
+        console.print("[red]Setup issues found:[/red]")
+        for issue in issues:
+            console.print(f"  • {issue}")
+        console.print("\n[yellow]Run 'dotconfig-hub setup' first[/yellow]")
+        return
+
+    templates_config_path = project_config.get_templates_config_path()
+    with open(templates_config_path, "r", encoding="utf-8") as f:
+        templates_config = yaml.safe_load(f)
+
+    env_set = _resolve_env_set_choice(templates_config, env_set)
+    if env_set is None:
+        return
+
+    current_sets = project_config.get_active_environment_sets()
+    if env_set in current_sets:
+        console.print(f"[yellow]Environment set '{env_set}' is already active[/yellow]")
+        return
+
+    project_config.add_environment_set(env_set)
+    project_config.save_config()
+
+    templates_source = project_config.get_templates_source()
+    project_mapping = ProjectMapping(templates_source)
+    project_mapping.add_project(
+        Path.cwd(), project_config.get_active_environment_sets()
+    )
+    project_mapping.save_mapping()
+
+    set_config = templates_config["environment_sets"][env_set]
+    tools = [*set_config.get("tools", {})]
+
+    active_sets = project_config.get_active_environment_sets()
+    console.print(f"[green]✓ Environment set '{env_set}' added[/green]")
+    console.print(f"[dim]Tools available: {', '.join(tools)}[/dim]")
+    console.print(f"[dim]Active sets (sync order): {', '.join(active_sets)}[/dim]")
+    console.print("\n[cyan]Next steps:[/cyan]")
+    console.print("  • Run 'dotconfig-hub sync' to synchronize files")
 
 
 @main.command()

@@ -116,15 +116,18 @@ class ProjectConfig:
         self.config_data["active_environment_sets"] = env_sets
 
     def add_environment_set(self, env_set: str) -> None:
-        """Add an environment set to active list.
+        """Append an environment set to the active list.
+
+        Order is preserved because `sync` processes active sets sequentially,
+        so the registration order defines the sync order.
 
         Args:
-            env_set: Environment set name to add
+            env_set: Environment set name to append
 
         """
-        active_sets = set(self.get_active_environment_sets())
-        active_sets.add(env_set)
-        self.set_active_environment_sets(list(active_sets))
+        active_sets = self.get_active_environment_sets()
+        if env_set not in active_sets:
+            self.set_active_environment_sets([*active_sets, env_set])
 
     def get_templates_config_path(self) -> Optional[Path]:
         """Get path to templates config.yaml file.
