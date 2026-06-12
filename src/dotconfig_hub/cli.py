@@ -366,7 +366,14 @@ def init(env_set: str, force: bool) -> None:
         console.print("Use --force to reconfigure")
         return
 
-    project_config.add_environment_set(env_set)
+    # Replace (not append) the active environment set: the current spec
+    # assumes a project syncs with exactly one environment set at a time.
+    replaced_sets = [s for s in current_sets if s != env_set]
+    if replaced_sets:
+        console.print(
+            f"[yellow]Replacing active environment set(s): {', '.join(replaced_sets)}[/yellow]"
+        )
+    project_config.set_active_environment_sets([env_set])
     project_config.save_config()
 
     templates_source = project_config.get_templates_source()
