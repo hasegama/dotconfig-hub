@@ -12,6 +12,57 @@ import yaml
 DEFAULT_EXCLUDE_SUFFIXES: Tuple[str, ...] = (".bak",)
 
 
+class UnsafePathError(ValueError):
+    """Raised when a configured path escapes its allowed base directory.
+
+    config.yaml comes from the hub repository, which may be shared with other
+    people. Paths in it must never point outside the hub (``project_dir``,
+    ``source``) or outside the project (``target``), otherwise syncing could
+    overwrite arbitrary files (e.g. ``~/.bashrc``) or copy secrets
+    (e.g. ``~/.ssh/id_ed25519``) into the hub.
+    """
+
+
+def is_within(path: Path, base: Path) -> bool:
+    """Return True if ``path`` stays inside ``base`` after resolving.
+
+    Both paths are resolved, so ``..`` segments and symlinks (including a
+    symlinked file or parent directory) that point outside ``base`` are
+    detected. Non-existent paths are resolved as far as possible.
+    """
+    try:
+        path.resolve().relative_to(base.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def safe_join(base: Path, relative: str, label: str) -> Path:
+    """Join ``relative`` onto ``base``, refusing paths that escape ``base``.
+
+    Args:
+        base: Directory the result must stay inside
+        relative: Path taken from config.yaml (may contain glob characters)
+        label: Name of the config field, used in the error message
+
+    Returns:
+        ``base / relative`` (not resolved, so callers keep their usual paths)
+
+    Raises:
+        UnsafePathError: If ``relative`` is absolute or resolves outside ``base``
+
+    """
+    rel = Path(str(relative))
+    if rel.is_absolute() or rel.anchor:
+        msg = f"Unsafe {label} in config.yaml (absolute path): {relative!r}"
+        raise UnsafePathError(msg)
+    joined = base / rel
+    if not is_within(joined, base):
+        msg = f"Unsafe {label} in config.yaml (points outside {base}): {relative!r}"
+        raise UnsafePathError(msg)
+    return joined
+
+
 class FileEntry(NamedTuple):
     """Parsed file entry from config.yaml.
 
@@ -137,10 +188,7 @@ class Config:
                 )
             # Dict entry missing both 'source' and 'path' keys is invalid.
             # Raise ValueError instead of letting KeyError leak from internal access.
-            msg = (
-                f"Dict file entry must contain 'source' or 'path' key, "
-                f"got: {entry!r}"
-            )
+            msg = f"Dict file entry must contain 'source' or 'path' key, got: {entry!r}"
             raise ValueError(msg)
         msg = f"Unexpected file entry type: {type(entry)}"
         raise TypeError(msg)
@@ -229,6 +277,17 @@ class Config:
 
         return {}, ""
 
+    def get_project_dir(self, tool_config: Dict[str, Any]) -> Path:
+        """Return the hub-side directory of a tool, confined to the hub.
+
+        Raises:
+            UnsafePathError: If ``project_dir`` points outside the hub
+
+        """
+        return safe_join(
+            self.base_dir, tool_config.get("project_dir", ""), "project_dir"
+        )
+
     def _resolve_source_files(
         self,
         tool_config: Dict[str, Any],
@@ -239,21 +298,24 @@ class Config:
         Extracted so callers that already hold a tool_config can avoid a
         redundant get_tool_config() round-trip.
         """
-        project_dir = self.base_dir / tool_config.get("project_dir", "")
+        project_dir = self.get_project_dir(tool_config)
         files = tool_config.get("files", [])
 
         source_files: List[Path] = []
         for entry in files:
             file_entry = self._parse_file_entry(entry)
             if "*" in file_entry.source or "?" in file_entry.source:
-                pattern_path = project_dir / file_entry.source
+                pattern_path = safe_join(project_dir, file_entry.source, "source")
                 matched_files = glob.glob(str(pattern_path), recursive=True)
                 for f in matched_files:
                     p = Path(f)
+                    # A match may still escape through a symlink
+                    if not is_within(p, project_dir):
+                        continue
                     if not self._is_excluded(p, exclude_suffixes):
                         source_files.append(p)
             else:
-                file_path = project_dir / file_entry.source
+                file_path = safe_join(project_dir, file_entry.source, "source")
                 if file_path.exists() and not self._is_excluded(
                     file_path, exclude_suffixes
                 ):
@@ -307,7 +369,7 @@ class Config:
         if not tool_config:
             return {}
 
-        project_dir = self.base_dir / tool_config.get("project_dir", "")
+        project_dir = self.get_project_dir(tool_config)
         files = tool_config.get("files", [])
 
         # Build rename map: hub source path -> project-side relative key
@@ -364,14 +426,17 @@ class Config:
             target_name = file_entry.target or file_entry.source
             # Handle glob patterns (rename not allowed with globs)
             if "*" in file_entry.source or "?" in file_entry.source:
-                pattern_path = target_dir / file_entry.source
+                pattern_path = safe_join(target_dir, file_entry.source, "source")
                 matched_files = glob.glob(str(pattern_path), recursive=True)
                 for f in matched_files:
                     p = Path(f)
+                    # A match may still escape through a symlink
+                    if not is_within(p, target_dir):
+                        continue
                     if not self._is_excluded(p, exclude_suffixes):
                         target_files.append(p)
             else:
-                file_path = target_dir / target_name
+                file_path = safe_join(target_dir, target_name, "target")
                 if not self._is_excluded(file_path, exclude_suffixes):
                     target_files.append(file_path)  # Include even if doesn't exist
 
@@ -405,7 +470,10 @@ class Config:
         else:
             exclude_suffixes = DEFAULT_EXCLUDE_SUFFIXES
 
-        project_dir = self.base_dir / tool_config.get("project_dir", "")
+        # Every path below is confined: hub-side paths to project_dir (itself
+        # inside the hub) and project-side paths to target_dir. Paths that
+        # escape (``..``, absolute paths, symlinks) raise UnsafePathError.
+        project_dir = self.get_project_dir(tool_config)
         files = tool_config.get("files", [])
 
         mapping = {}
@@ -415,8 +483,8 @@ class Config:
             target_name = file_entry.target or file_entry.source
             # For non-glob patterns, create direct mapping
             if "*" not in file_entry.source and "?" not in file_entry.source:
-                source = project_dir / file_entry.source
-                target = target_dir / target_name
+                source = safe_join(project_dir, file_entry.source, "source")
+                target = safe_join(target_dir, target_name, "target")
                 if self._is_excluded(source, exclude_suffixes):
                     continue
                 # Include in mapping only if at least one side is a file
@@ -426,8 +494,8 @@ class Config:
             else:
                 # For glob patterns, match files from both source and target
                 # (rename not allowed with globs, so source == target name)
-                source_pattern = project_dir / file_entry.source
-                target_pattern = target_dir / file_entry.source
+                source_pattern = safe_join(project_dir, file_entry.source, "source")
+                target_pattern = safe_join(target_dir, file_entry.source, "target")
 
                 # Get files from both sides
                 source_files = glob.glob(str(source_pattern), recursive=True)
@@ -437,6 +505,9 @@ class Config:
                 for source_file in source_files:
                     source_path = Path(source_file)
                     if not source_path.is_file():
+                        continue
+                    # A match may still escape through a symlink
+                    if not is_within(source_path, project_dir):
                         continue
                     if self._is_excluded(source_path, exclude_suffixes):
                         continue
@@ -452,6 +523,9 @@ class Config:
                 for target_file in target_files:
                     target_path = Path(target_file)
                     if not target_path.is_file():
+                        continue
+                    # A match may still escape through a symlink
+                    if not is_within(target_path, target_dir):
                         continue
                     if self._is_excluded(target_path, exclude_suffixes):
                         continue
