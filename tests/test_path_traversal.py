@@ -9,6 +9,7 @@ import os
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -260,3 +261,43 @@ class TestSyncDoesNotEscape:
             TOOL, _project(workspace), "remote", False, ENV_SET
         )
         assert (workspace / "home" / ".bashrc").read_text() == "original\n"
+
+
+def _sync_answering(config: Config, root: Path, key: str) -> None:
+    """対話式の同期を、操作選択に ``key`` と答え、確認にはすべて yes で実行する。"""
+    with (
+        patch("dotconfig_hub.sync.Prompt.ask", return_value=key),
+        patch("dotconfig_hub.sync.Confirm.ask", return_value=True),
+    ):
+        FileSyncer(config).sync_tool(TOOL, _project(root), None, False, ENV_SET)
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unsupported")
+class TestDeleteWithBackupDoesNotEscape:
+    """片側だけ残ったファイルの削除は Hub と Project の外に及ばない。"""
+
+    def test_project_side_delete_does_not_reach_through_symlinked_dir(
+        self, workspace: Path
+    ) -> None:
+        """Project 側の削除は、シンボリックリンクのディレクトリ先のドットファイルを消さない。"""
+        outside = workspace / "home" / "outside"
+        outside.mkdir()
+        (outside / ".profile").write_text("original\n")
+        (_project(workspace) / ".vscode").symlink_to(outside)
+        config = _config(workspace, ["**/*"])
+        _sync_answering(config, workspace, "p")
+        assert (outside / ".profile").read_text() == "original\n"
+        assert not (outside / "payload.sh").exists()
+
+    def test_hub_side_delete_does_not_reach_through_symlinked_dir(
+        self, workspace: Path
+    ) -> None:
+        """Hub 側の削除は、シンボリックリンクのディレクトリ先のドットファイルを消さない。"""
+        outside = workspace / "home" / "outside"
+        outside.mkdir()
+        (outside / ".env").write_text("keep\n")
+        (workspace / "hub" / "set" / "conf").symlink_to(outside)
+        config = _config(workspace, ["**/*"])
+        _sync_answering(config, workspace, "h")
+        assert (outside / ".env").read_text() == "keep\n"
+
