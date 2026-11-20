@@ -506,17 +506,20 @@ class Config:
                     source_path = Path(source_file)
                     if not source_path.is_file():
                         continue
-                    # A match may still escape through a symlink
-                    if not is_within(source_path, project_dir):
-                        continue
                     if self._is_excluded(source_path, exclude_suffixes):
                         continue
                     try:
                         relative_path = source_path.relative_to(project_dir)
-                        target_path = target_dir / relative_path
-                        mapping[source_path] = target_path
                     except ValueError:
                         continue
+                    target_path = target_dir / relative_path
+                    # Either side may still escape through a symlink
+                    if not (
+                        is_within(source_path, project_dir)
+                        and is_within(target_path, target_dir)
+                    ):
+                        continue
+                    mapping[source_path] = target_path
 
                 # Process target files that don't have corresponding source files
                 # (skip directories and excluded files)
@@ -524,18 +527,21 @@ class Config:
                     target_path = Path(target_file)
                     if not target_path.is_file():
                         continue
-                    # A match may still escape through a symlink
-                    if not is_within(target_path, target_dir):
-                        continue
                     if self._is_excluded(target_path, exclude_suffixes):
                         continue
                     try:
                         relative_path = target_path.relative_to(target_dir)
-                        source_path = project_dir / relative_path
-                        # Only add if not already in mapping
-                        if source_path not in mapping:
-                            mapping[source_path] = target_path
                     except ValueError:
                         continue
+                    source_path = project_dir / relative_path
+                    # Either side may still escape through a symlink
+                    if not (
+                        is_within(source_path, project_dir)
+                        and is_within(target_path, target_dir)
+                    ):
+                        continue
+                    # Only add if not already in mapping
+                    if source_path not in mapping:
+                        mapping[source_path] = target_path
 
         return mapping

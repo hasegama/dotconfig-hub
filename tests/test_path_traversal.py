@@ -230,3 +230,33 @@ class TestSyncDoesNotEscape:
                 TOOL, _project(workspace), "remote", False, ENV_SET
             )
         assert not (workspace / "hub" / "set" / ".vscode" / "leak.txt").exists()
+
+    @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unsupported")
+    def test_glob_sync_local_does_not_write_through_project_symlink(
+        self, workspace: Path
+    ) -> None:
+        """Glob sync local does not write through a symlinked project directory."""
+        (workspace / "hub" / "set" / "conf").mkdir()
+        (workspace / "hub" / "set" / "conf" / "run.sh").write_text("evil\n")
+        (workspace / "home" / "outside").mkdir()
+        (workspace / "home" / "outside" / "run.sh").write_text("original\n")
+        (_project(workspace) / "conf").symlink_to(workspace / "home" / "outside")
+        config = _config(workspace, ["**/*"])
+        FileSyncer(config).sync_tool(TOOL, _project(workspace), "local", False, ENV_SET)
+        assert (workspace / "home" / "outside" / "run.sh").read_text() == "original\n"
+
+    @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unsupported")
+    def test_glob_sync_remote_does_not_write_through_hub_symlink(
+        self, workspace: Path
+    ) -> None:
+        """Glob sync remote does not write through a symlinked hub file."""
+        (workspace / "hub" / "set" / ".vscode" / "x.txt").symlink_to(
+            workspace / "home" / ".bashrc"
+        )
+        (_project(workspace) / ".vscode").mkdir()
+        (_project(workspace) / ".vscode" / "x.txt").write_text("evil\n")
+        config = _config(workspace, [".vscode/*.txt"])
+        FileSyncer(config).sync_tool(
+            TOOL, _project(workspace), "remote", False, ENV_SET
+        )
+        assert (workspace / "home" / ".bashrc").read_text() == "original\n"
