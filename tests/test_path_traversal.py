@@ -14,6 +14,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from dotconfig_hub.backup import BackupManager, make_backup_path
 from dotconfig_hub.config import Config, UnsafePathError, is_within, safe_join
 from dotconfig_hub.sync import FileSyncer
 
@@ -301,3 +302,45 @@ class TestDeleteWithBackupDoesNotEscape:
         _sync_answering(config, workspace, "h")
         assert (outside / ".env").read_text() == "keep\n"
 
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unsupported")
+class TestRollbackDoesNotEscape:
+    """rollback はバックアップと元ファイルの両方がルート内にあるものだけを戻す。"""
+
+    VERSION = "20260101_000000"
+
+    def _with_regular_backup(self, workspace: Path) -> Path:
+        """同じバージョンの通常のバックアップを作り、その元ファイルを返す。"""
+        original = workspace / "hub" / "set" / "ok.txt"
+        original.write_text("current\n")
+        make_backup_path(original, self.VERSION).write_text("restored\n")
+        return original
+
+    def test_rollback_does_not_write_through_symlinked_original(
+        self, workspace: Path
+    ) -> None:
+        """元ファイルがルート外へのシンボリックリンクなら、書き戻さない。"""
+        link = workspace / "hub" / "set" / "rc"
+        link.symlink_to(workspace / "home" / ".bashrc")
+        make_backup_path(link, self.VERSION).write_text("evil\n")
+        ok = self._with_regular_backup(workspace)
+
+        BackupManager(workspace / "hub").rollback(self.VERSION)
+
+        assert (workspace / "home" / ".bashrc").read_text() == "original\n"
+        assert ok.read_text() == "restored\n"
+
+    def test_rollback_does_not_copy_secret_from_symlinked_backup(
+        self, workspace: Path
+    ) -> None:
+        """バックアップがルート外へのシンボリックリンクなら、中身を取り込まない。"""
+        notes = workspace / "hub" / "set" / "notes.md"
+        make_backup_path(notes, self.VERSION).symlink_to(
+            workspace / "home" / ".ssh" / "id_ed25519"
+        )
+        ok = self._with_regular_backup(workspace)
+
+        BackupManager(workspace / "hub").rollback(self.VERSION)
+
+        assert not notes.exists()
+        assert ok.read_text() == "restored\n"
