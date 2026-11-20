@@ -20,6 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from .config import is_within
+
 # Timestamp format shared by all backup suffixes (e.g. 20260612_153000)
 BACKUP_TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
 
@@ -76,6 +78,9 @@ class BackupManager:
     def find_backups(self) -> Dict[str, List[Path]]:
         """Find all backup files under the root, grouped by timestamp.
 
+        バックアップ自身か元ファイルがシンボリックリンク経由でルートの外を指すものは
+        除外する。clean と rollback がルート外のファイルに触れないようにするため。
+
         Returns
         -------
             Mapping of timestamp (version) to the backup file paths that
@@ -88,10 +93,16 @@ class BackupManager:
             dirnames[:] = [d for d in dirnames if d not in SKIP_DIR_NAMES]
             for name in filenames:
                 match = BACKUP_NAME_PATTERN.match(name)
-                if match:
-                    grouped.setdefault(match.group("timestamp"), []).append(
-                        Path(dirpath) / name
-                    )
+                if match is None:
+                    continue
+                backup = Path(dirpath) / name
+                # ルートは共有された Hub のこともある。リンク先がルート外なら対象外
+                if not (
+                    is_within(backup, self.root)
+                    and is_within(original_path(backup), self.root)
+                ):
+                    continue
+                grouped.setdefault(match.group("timestamp"), []).append(backup)
         for paths in grouped.values():
             paths.sort()
         return grouped

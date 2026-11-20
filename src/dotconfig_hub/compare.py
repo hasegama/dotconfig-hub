@@ -19,7 +19,7 @@ from rich.prompt import Prompt
 from rich.syntax import Syntax
 from rich.table import Table
 
-from .config import Config
+from .config import Config, safe_join
 from .diff import DiffViewer
 
 
@@ -375,11 +375,11 @@ class EnvSetComparer:
         for tool_name in self.config.get_tools(target_set):
             tool_config, _ = self.config.get_tool_config(tool_name, target_set)
             if tool_config:
-                project_dir = self.config.base_dir / tool_config.get("project_dir", "")
+                project_dir = self.config.get_project_dir(tool_config)
                 # Check if relative_path is a rename target and reverse-map
                 # to the hub-side source name
                 hub_relative = self._reverse_rename_lookup(relative_path, tool_config)
-                return project_dir / hub_relative
+                return safe_join(project_dir, hub_relative, "source")
 
         # Fallback: should not normally reach here
         msg = (
